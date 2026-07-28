@@ -184,6 +184,7 @@ uniform vec3  uCamLocal;
 uniform vec3  uSunLocal;
 uniform float uSunAng;
 uniform float uWrap;
+uniform float uLimb;
 
 uniform vec3  uBase;
 uniform vec3  uAccent;
@@ -466,7 +467,18 @@ void main(){
   diff *= diff;
   float night = saturate((-ndl - 0.02) * 4.0);
 
-  vec3 col = albedo * diff * uSunColor * uSunIntensity;
+  // Minnaert limb darkening. Planetary surfaces are not Lambertian: at the
+  // sub-solar point you look straight down through the least material, and at
+  // the limb you look along a grazing path through far more of it. Every real
+  // planetary disc is therefore noticeably brighter in the middle — Juno's
+  // Jupiter and Apollo's Earth both fall off hard toward the edge. Without
+  // this term a planet reads as a flat sticker no matter how good the surface
+  // detail is, because the eye reads uniform edge-to-edge brightness as paint
+  // rather than as a sphere.
+  float ndv = max(dot(N, V), 1e-3);
+  float limb = pow(ndv, uLimb);
+
+  vec3 col = albedo * diff * limb * uSunColor * uSunIntensity;
 
   // Specular. GGX-ish lobe; on water this is the sun glint that sells scale
   // better than any amount of surface detail.
@@ -735,6 +747,10 @@ export class PlanetBody {
       uSunIntensity: { value: 1 },
       uSunAng: { value: 0.02 },
       uWrap: { value: clamp(0.04 + r.atmosphere * 0.16, 0.04, 0.3) },
+      // Deep atmospheres limb-darken hardest, airless rock barely at all —
+      // the Moon is famously almost flat across its disc for exactly this
+      // reason, while Jupiter falls away sharply.
+      uLimb: { value: r.isGiant ? 0.62 : clamp(0.10 + r.atmosphere * 0.30, 0.06, 0.45) },
 
       uBase: { value: this.baseColor },
       uAccent: { value: this.accentColor },

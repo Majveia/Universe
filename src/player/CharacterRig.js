@@ -270,6 +270,11 @@ export class CharacterRig {
 
     /** Per-foot planting state, all in world space so nothing skates. */
     this.feet = [makeFoot(), makeFoot()];
+    // Feet carry their own lateral sign so the placement code can offset them
+    // without having to know which array slot it is looking at. Left is -1 to
+    // match `legs[0]`, so foot i and leg i are always the same limb.
+    this.feet[0].side = -1;
+    this.feet[1].side = 1;
     /** Fired the tick a foot makes contact: (index, worldPos, worldNormal, speed). */
     this.onFootPlant = null;
 

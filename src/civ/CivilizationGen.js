@@ -276,7 +276,7 @@ const STATES = [
  */
 export function makeCivilization(planet, seedOverride = null) {
   const seed = seedOverride ?? planet.seed ?? hashString(planet.name || 'unnamed');
-  const rng = new Rng(hashInt(seed ^ 0x1c1v11a));
+  const rng = new Rng(hashInt(seed ^ 0x1c1f11a));
 
   const tech = clamp(planet.techLevel ?? 0.4, 0, 1);
   const gravity = (planet.gravity ?? 9.81) / 9.81;

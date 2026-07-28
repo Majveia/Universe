@@ -230,7 +230,14 @@ void main(){
   // nodes still have somewhere to go before the tonemapper rolls them off.
   // Scaled by vFlux so the total light a tracer emits is independent of how
   // many pixels its splat happens to cover.
-  float brightness = (0.55 + pow(d, 1.45) * 2.6) * vFlux * atten * vEdge * uIntensity;
+  // Per-tracer peak is deliberately low. AgX rolls bright saturated values
+  // toward white — which is correct for a star, and fatal here: push a single
+  // splat hard enough and the tonemapper bleaches it grey before the colour
+  // ramp can say anything about density. The brightness of a filament has to
+  // come from hundreds of faint overlaps, not from any one tracer being loud.
+  // This is the third principle in this file's header, and the one easiest to
+  // break while chasing visibility.
+  float brightness = (0.16 + pow(d, 1.55) * 0.62) * vFlux * atten * vEdge * uIntensity;
 
   gl_FragColor = vec4(col * brightness * alpha, alpha * uFade);
 }
@@ -400,7 +407,7 @@ export class CosmicWeb {
         // sightline, so this is set from how many tracers a filament crossing
         // actually stacks — a few dozen — such that a filament lands just
         // above the bloom threshold and a void stays near black.
-        uIntensity: { value: 3.2 },
+        uIntensity: { value: 11.0 },
         // e-folding length ~14 units, about two structure diameters. That is
         // the depth at which filaments still overlap enough to look like a
         // connected network but not so much that they average out.
@@ -408,10 +415,10 @@ export class CosmicWeb {
         // Voids are not black — they are the faintest possible indigo, which
         // on an OLED reads as "space with something in it" rather than as a
         // dead panel. Sheets cool violet, filaments cyan, nodes gold.
-        uVoidColor: { value: new THREE.Color(0.10, 0.13, 0.32) },
-        uSheetColor: { value: new THREE.Color(0.34, 0.30, 0.78) },
-        uFilamentColor: { value: new THREE.Color(0.36, 0.72, 1.00) },
-        uNodeColor: { value: new THREE.Color(1.00, 0.82, 0.48) },
+        uVoidColor: { value: new THREE.Color(0.07, 0.10, 0.34) },
+        uSheetColor: { value: new THREE.Color(0.30, 0.22, 0.86) },
+        uFilamentColor: { value: new THREE.Color(0.24, 0.74, 1.00) },
+        uNodeColor: { value: new THREE.Color(1.00, 0.72, 0.26) },
       },
       vertexShader: WEB_VERT,
       fragmentShader: WEB_FRAG,

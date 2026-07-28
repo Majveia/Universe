@@ -227,8 +227,12 @@ const TYPE_PALETTE = {
   [PlanetType.FROZEN]: { base: [0.72, 0.80, 0.88], accent: [0.90, 0.95, 1.0], atmo: [0.62, 0.78, 1.0], water: [0.14, 0.30, 0.44] },
   [PlanetType.TOXIC]: { base: [0.36, 0.38, 0.14], accent: [0.72, 0.78, 0.26], atmo: [0.72, 0.86, 0.30], water: [0.24, 0.30, 0.08] },
   [PlanetType.IRRADIATED]: { base: [0.32, 0.20, 0.34], accent: [0.78, 0.34, 0.86], atmo: [0.66, 0.32, 0.90], water: [0.20, 0.06, 0.26] },
-  [PlanetType.GASGIANT]: { base: [0.66, 0.54, 0.40], accent: [0.90, 0.82, 0.68], atmo: [0.92, 0.80, 0.62], water: null },
-  [PlanetType.ICEGIANT]: { base: [0.24, 0.46, 0.62], accent: [0.52, 0.78, 0.90], atmo: [0.40, 0.70, 0.95], water: null },
+  // Giants live or die on the spread between `base` and `accent`, because the
+  // band shader mixes between them. Jupiter's belts are red-brown and its
+  // zones are near-white ammonia cloud; two shades of the same tan renders a
+  // monochrome ball with stripes on it. The gap here is deliberately wide.
+  [PlanetType.GASGIANT]: { base: [0.52, 0.26, 0.14], accent: [0.94, 0.88, 0.74], atmo: [0.92, 0.80, 0.62], water: null },
+  [PlanetType.ICEGIANT]: { base: [0.13, 0.34, 0.56], accent: [0.66, 0.90, 0.94], atmo: [0.40, 0.70, 0.95], water: null },
   [PlanetType.EXOTIC]: { base: [0.16, 0.10, 0.26], accent: [0.90, 0.28, 0.62], atmo: [0.70, 0.24, 0.90], water: [0.30, 0.02, 0.36] },
   [PlanetType.RINGWORLD]: { base: [0.30, 0.32, 0.36], accent: [0.80, 0.84, 0.90], atmo: [0.50, 0.70, 1.0], water: [0.02, 0.12, 0.24] },
 };
