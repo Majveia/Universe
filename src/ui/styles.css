@@ -1232,3 +1232,177 @@ html, body {
   animation-iteration-count: 1 !important;
   transition-duration: 60ms !important;
 }
+
+/* ==========================================================================
+ * HUD, continued
+ *
+ * The rules above describe every widget in isolation. These describe how they
+ * behave once a controller is driving them: what "resting" actually means for
+ * a block that has nothing to say, how a label survives being one of forty on
+ * screen at once, and what the panels do with a keyboard.
+ *
+ * Same three constraints. Nothing here animates a layout property, nothing
+ * here is lit unless it is answering something, and the only structure is a
+ * hairline.
+ * ========================================================================== */
+
+/* TouchControls draws into an absolute plane so the stick can be positioned in
+ * raw viewport coordinates and the cluster can hang off the bottom-right
+ * corner. It never receives events itself — only its children do. */
+.touch-root { position: absolute; inset: 0; }
+
+/*
+ * The three corner blocks default to invisible and the controller lights them.
+ * That is the whole relevance rule expressed as three class toggles: a block
+ * with no data does not fade to a low alpha, it is simply not there, because a
+ * dim thing on an OLED still reads as clutter while true black reads as sky.
+ */
+.hud-tl.on, .vitals.on, .actions.on { opacity: 1; }
+
+/* Diagnostics. Off by default, summoned with the debug key, and deliberately
+ * the dimmest thing on screen — it is for me, not for the player. */
+.hud-diag {
+  position: absolute;
+  left: calc(var(--safe-l) + 18px);
+  top: calc(var(--safe-t) + 58px);
+  display: none;
+  gap: 11px;
+  font-family: var(--mono);
+  font-size: calc(8.5px * var(--ui-scale));
+  letter-spacing: 0.14em;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--dim));
+  opacity: 0.34;
+}
+.hud-diag.on { display: flex; }
+.hud-diag b { font-weight: 400; color: rgb(var(--ink)); opacity: 0.7; }
+
+/* Focus has to be reachable in the world, not only inside panels — the touch
+ * buttons are real buttons and a keyboard user will land on them. */
+.hud .interactive:focus-visible { outline: 1px solid rgba(122, 214, 255, 0.8); outline-offset: 3px; }
+
+/* ------------------------------------------------------------ scan ring ---- */
+/*
+ * The ring is an SVG, and it has to be, for a reason that is easy to get wrong:
+ * a bordered `div` scaled by a transform scales its border too, so a 1px ring
+ * blown up 700x becomes a 700px-thick filled disc. `vector-effect` pins the
+ * stroke to one device pixel no matter what the transform does, which is the
+ * only way to get a hairline that expands to fill the screen.
+ */
+svg.scan-pulse {
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  transform-origin: 50% 50%;
+}
+svg.scan-pulse .sp-ring {
+  fill: none;
+  stroke: rgb(var(--accent));
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+/* The second ring trails the first by a beat, which is what makes the sweep
+ * read as a pulse of energy rather than as a single expanding circle. */
+svg.scan-pulse.go.trail { animation-delay: 180ms; }
+
+/* The leader line is scaled, never resized, so it needs a unit width to scale. */
+.callout .co-leg { width: 1px; }
+/* Callouts far from the reticle step back rather than disappear: the frame
+ * stays informative, but the thing you are actually looking at stays loudest. */
+.callout.far .co-label { opacity: 0.5; }
+.callout.far .co-sub { opacity: 0.28; }
+.callout.far .co-dot { opacity: 0.4; }
+.callout.far .co-body { border-color: rgba(122, 214, 255, 0.16); }
+
+/* ----------------------------------------------------------- panel chrome -- */
+
+.panel-head-right { display: flex; align-items: center; gap: 16px; }
+.panel-tabs { margin-bottom: -2px; }
+
+/* Codex ------------------------------------------------------------------- */
+
+.codex-count {
+  font-family: var(--mono);
+  font-size: calc(8px * var(--ui-scale));
+  letter-spacing: 0.2em;
+  color: rgb(var(--dim));
+  opacity: 0.3;
+  margin-bottom: 12px;
+}
+.cd-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 20px; }
+.tag {
+  font-family: var(--mono);
+  font-size: calc(8px * var(--ui-scale));
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border: 1px solid var(--hair);
+  border-radius: 2px;
+  color: rgb(var(--dim));
+  opacity: 0.66;
+}
+.tag.hot { color: rgb(var(--warm)); border-color: rgba(255, 198, 122, 0.22); }
+.tag.live { color: rgb(var(--ok)); border-color: rgba(126, 231, 168, 0.22); }
+/* The habitability meter reads left-to-right as a percentage of "you could
+ * stand here without dying", so its label sits at both ends of the hairline. */
+.cd-hab-head { display: flex; justify-content: space-between; align-items: baseline; }
+
+/* Settings ---------------------------------------------------------------- */
+
+.set-note {
+  margin-top: 26px;
+  max-width: 46ch;
+  font-family: var(--mono);
+  font-size: calc(9px * var(--ui-scale));
+  line-height: 1.8;
+  letter-spacing: 0.08em;
+  color: rgb(var(--dim));
+  opacity: 0.3;
+}
+
+/* Photo mode -------------------------------------------------------------- */
+
+.photo-dock { pointer-events: auto; }
+.photo-head { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; }
+.photo-name {
+  font-family: var(--mono);
+  font-size: calc(8.5px * var(--ui-scale));
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgb(var(--ink));
+  opacity: 0.66;
+}
+.photo-read {
+  font-family: var(--mono);
+  font-size: calc(8.5px * var(--ui-scale));
+  letter-spacing: 0.16em;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--dim));
+  opacity: 0.4;
+}
+.photo-slider .set-val { min-width: 40px; }
+/* A rule of thirds grid, at an alpha where it guides the eye and never joins
+ * the picture. It is off by default because most frames do not need it. */
+.photo-thirds { position: absolute; inset: 3.4vmin; opacity: 0; transition: opacity 200ms var(--ease); }
+.photo-thirds.on { opacity: 1; }
+.photo-thirds i { position: absolute; background: rgba(216, 240, 255, 0.07); }
+.photo-thirds i:nth-child(1) { left: 33.333%; top: 0; bottom: 0; width: 1px; }
+.photo-thirds i:nth-child(2) { left: 66.666%; top: 0; bottom: 0; width: 1px; }
+.photo-thirds i:nth-child(3) { top: 33.333%; left: 0; right: 0; height: 1px; }
+.photo-thirds i:nth-child(4) { top: 66.666%; left: 0; right: 0; height: 1px; }
+
+/* ---------------------------------------------------------------- narrow -- */
+
+@media (max-width: 560px), (max-height: 460px) {
+  /* On a phone the bottom-right corner belongs to the thumb cluster, so the
+   * desktop key hints get out of its way entirely rather than stacking under
+   * it — they are never shown on a touch device anyway, but a small laptop in
+   * a narrow window would otherwise collide with them. */
+  .actions { bottom: calc(var(--safe-b) + 92px); }
+  .hud-diag { top: calc(var(--safe-t) + 52px); gap: 8px; }
+  .codex-detail { padding-bottom: 24px; }
+  .photo-dock { width: calc(100vw - 16px); padding: 12px 14px; }
+  .photo-sliders { grid-template-columns: 1fr; }
+  .photo-slider { grid-template-columns: 56px 1fr 34px; }
+  .cd-stats { grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 14px 16px; }
+}

@@ -32,6 +32,8 @@ import * as THREE from 'three';
 import { Realm } from '../core/Director.js';
 import { Star } from './Star.js';
 import { PlanetBody } from './PlanetBody.js';
+import { Rings } from './Rings.js';
+import { AsteroidBelt } from './AsteroidBelt.js';
 import { makeStar, makeSystem, orbitalPosition, AU } from '../universe/Catalog.js';
 import { settings } from '../core/Settings.js';
 import { clamp, damp } from '../core/Noise.js';
@@ -63,6 +65,7 @@ export class SystemRealm extends Realm {
     // fast enough that the outer system is not frozen.
     this.timeScale = 60 * 60 * 10; // ~10 hours of orbit per real second
     this.planets = [];
+    this.belts = [];
     this.followTarget = null;
     this.followOffset = null;
     this._tmp = new THREE.Vector3();
@@ -189,13 +192,34 @@ export class SystemRealm extends Realm {
       const holder = new THREE.Group();
       holder.add(body.object3d);
       this.scene.add(holder);
+
+      // Rings hang off the planet's tilted frame, not its spinning surface,
+      // so they inherit axial tilt and stay in the equatorial plane.
+      let rings = null;
+      if (rec.hasRings) {
+        rings = new Rings(rec);
+        body.group.add(rings.object3d);
+      }
+
       this.planets.push({
         record: rec,
         body,
+        rings,
         holder,
         truePos: new THREE.Vector3(),
         renderDist: 0,
       });
+    }
+
+    // Belts do their own floating-origin and compression in the vertex shader,
+    // so they are added to the scene root rather than to a holder.
+    this.belts = [];
+    for (const b of this.system.belts) {
+      const belt = new AsteroidBelt(b, this.starRecord.mass, {
+        compA: COMP_A, compB: COMP_B,
+      });
+      this.scene.add(belt.object3d);
+      this.belts.push(belt);
     }
 
     this._buildOrbitLines();
@@ -409,6 +433,15 @@ export class SystemRealm extends Realm {
       this._light.intensity = clamp(Math.pow(p.record.flux, 0.35), 0.34, 2.6);
       this._light.angularRadius = Math.atan(this.starRecord.radius / Math.max(p.record.orbitRadius, 1));
       p.body.sync(this._light);
+      if (p.rings) p.rings.sync(this._light);
+    }
+
+    // Belts are lit from the star's direction at the belt, which for a body
+    // that far out is close enough to the star's own bearing from the camera.
+    this._light.dirWorld.copy(this.starHolder.position).normalize();
+    this._light.intensity = 1.1;
+    for (const belt of this.belts) {
+      belt.update(this.simTime, this.viewPos, this._light);
     }
 
     this._updateOrbitLines();
@@ -429,10 +462,16 @@ export class SystemRealm extends Realm {
 
   _teardownSystem() {
     for (const p of this.planets) {
+      p.rings?.dispose();
       p.body.dispose();
       this.scene.remove(p.holder);
     }
     this.planets.length = 0;
+    for (const b of this.belts || []) {
+      b.dispose();
+      this.scene.remove(b.object3d);
+    }
+    this.belts = [];
     for (const o of this.orbitLines || []) {
       o.geo.dispose();
       o.mat.dispose();
