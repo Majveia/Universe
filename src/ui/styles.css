@@ -147,6 +147,1088 @@ html, body {
 .fade-in { animation: fade-in 600ms cubic-bezier(0.4, 0, 0.2, 1) both; }
 @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
+/* ==========================================================================
+ * HUD
+ *
+ * Everything below obeys three constraints that come straight from the header
+ * of this file, plus one that comes from the hardware:
+ *
+ *   Relevance   — a widget's resting opacity is near zero. It rises only while
+ *                 it is answering a question. `.on` is the only state that
+ *                 lights anything up; timers in HUD.js take it away again.
+ *   Transform   — every animated property here is `opacity` or `transform`.
+ *                 Nothing animates width, top, left or font-size, because the
+ *                 HUD shares a frame budget with a renderer that is already
+ *                 spending all of it.
+ *   Hairlines   — structure is drawn at 1px and 7-12% alpha. On an OLED a grey
+ *                 panel is a hole burned in the sky; a hairline is a pencil
+ *                 mark on it.
+ *   Coordinates — the HUD root is `fixed` so its children live in the same raw
+ *                 viewport coordinate space that Input reports touches in. The
+ *                 floating stick can then be drawn exactly where the thumb is
+ *                 with no conversion and therefore no drift.
+ * ========================================================================== */
+
+:root {
+  --hair: rgba(216, 240, 255, 0.085);
+  --hair-2: rgba(216, 240, 255, 0.16);
+  /* Out-expo. Arrivals should decelerate hard; nothing in this UI "bounces". */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-io: cubic-bezier(0.65, 0, 0.35, 1);
+  --hit: 44px;               /* Apple/Material minimum; visuals sit inside it */
+}
+
+.hud {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  font-size: calc(13px * var(--ui-scale));
+  color: rgb(var(--ink));
+  contain: layout style;
+}
+.hud * { pointer-events: none; }
+.hud .interactive, .hud .interactive * { pointer-events: auto; }
+
+/* Photo mode and the `hud` toggle both want a total blackout of chrome, but
+ * they must not tear down the DOM — the panels keep their scroll position and
+ * focus ring so returning is instant. */
+.hud.chrome-off .hud-chrome { opacity: 0 !important; }
+
+.hud-layer { position: absolute; }
+
+/* Shared micro-typography ------------------------------------------------- */
+
+.k { /* key: the small uppercase label above a value */
+  font-family: var(--mono);
+  font-size: calc(8.5px * var(--ui-scale));
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgb(var(--dim));
+  opacity: 0.5;
+  white-space: nowrap;
+}
+.v { /* value */
+  font-family: var(--mono);
+  font-size: calc(11px * var(--ui-scale));
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--ink));
+  opacity: 0.82;
+  white-space: nowrap;
+}
+.rule { height: 1px; background: var(--hair); }
+
+/* --------------------------------------------------------------- reticle -- */
+/*
+ * The reticle is translated by whole pixels from the top-left origin rather
+ * than centred with `left:50%`, because 50% of an odd viewport is a half pixel
+ * and a 2px dot straddling one is a 4px grey smear. Whole-pixel translate plus
+ * even-numbered geometry keeps it a dot.
+ */
+.reticle {
+  position: absolute;
+  left: 0; top: 0;
+  width: 0; height: 0;
+  opacity: 0;
+  transition: opacity 260ms var(--ease);
+  will-change: transform, opacity;
+}
+.reticle.on { opacity: 1; }
+.reticle svg { position: absolute; left: -40px; top: -40px; width: 80px; height: 80px; overflow: visible; }
+.reticle .r-dot { fill: rgb(var(--ink)); opacity: 0.34; }
+.reticle .r-brk {
+  fill: none;
+  stroke: rgb(var(--ink));
+  stroke-width: 1;
+  opacity: 0;
+  transform-origin: 40px 40px;
+  transform: scale(0.62);
+  transition: opacity 220ms var(--ease), transform 300ms var(--ease), stroke 220ms linear;
+}
+.reticle .r-ring {
+  fill: none;
+  stroke: rgb(var(--accent));
+  stroke-width: 1;
+  opacity: 0;
+  transform-origin: 40px 40px;
+  transform: scale(0.5);
+}
+.reticle.aim .r-dot { opacity: 0.16; }
+.reticle.aim .r-brk { opacity: 0.5; transform: scale(1); }
+.reticle.aim.hostile .r-brk { stroke: rgb(var(--danger)); opacity: 0.72; }
+.reticle.aim.scanned .r-brk { stroke: rgb(var(--ok)); }
+.reticle.hit .r-ring { animation: r-hit 420ms var(--ease) both; }
+@keyframes r-hit {
+  from { opacity: 0.9; transform: scale(0.42); }
+  to   { opacity: 0;   transform: scale(1.5); }
+}
+/* Charge arc for hold-to-scan. Dash offset, not width — no layout. */
+.reticle .r-charge {
+  fill: none;
+  stroke: rgb(var(--accent));
+  stroke-width: 1.4;
+  opacity: 0.75;
+  stroke-dasharray: 100.5;
+  stroke-dashoffset: 100.5;
+  transform-origin: 40px 40px;
+  transform: rotate(-90deg);
+}
+
+/* --------------------------------------------------------------- compass -- */
+/*
+ * A horizon strip, not a rose. It reads like an instrument reflected in glass:
+ * one hairline, ticks that slide under it, and a sun mark. It sits at the very
+ * top edge where the eye can check it without leaving the centre of frame.
+ */
+.compass {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--safe-t) + 10px);
+  width: min(560px, 52vw);
+  height: 26px;
+  transform: translateX(-50%);
+  opacity: 0;
+  transition: opacity 420ms var(--ease);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+}
+.compass-track { position: absolute; left: 0; top: 0; height: 100%; will-change: transform; }
+.compass-line {
+  position: absolute;
+  left: 0; right: 0; top: 13px;
+  height: 1px;
+  background: var(--hair);
+}
+.c-tick {
+  position: absolute;
+  top: 9px;
+  width: 1px; height: 5px;
+  margin-left: -0.5px;
+  background: rgba(216, 240, 255, 0.22);
+}
+.c-tick.major { top: 6px; height: 8px; background: rgba(216, 240, 255, 0.34); }
+.c-card {
+  position: absolute;
+  top: 15px;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: calc(9px * var(--ui-scale));
+  letter-spacing: 0.14em;
+  color: rgb(var(--ink));
+  opacity: 0.6;
+}
+.c-card.ord { opacity: 0.3; font-size: calc(8px * var(--ui-scale)); }
+/* Heading readout sits above the line, dead centre — the one number you check. */
+.c-read {
+  position: absolute;
+  left: 50%; top: -2px;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: calc(10px * var(--ui-scale));
+  letter-spacing: 0.1em;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--ink));
+  opacity: 0.78;
+}
+.c-caret {
+  position: absolute;
+  left: 50%; top: 11px;
+  width: 5px; height: 5px;
+  margin-left: -2.5px;
+  background: rgb(var(--accent));
+  opacity: 0.55;
+  clip-path: polygon(50% 100%, 0 0, 100% 0);
+}
+.c-way {
+  position: absolute;
+  top: 8px;
+  will-change: transform;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+.c-way i {
+  width: 5px; height: 5px;
+  background: rgb(var(--warm));
+  opacity: 0.8;
+  transform: rotate(45deg);
+  display: block;
+}
+.c-way b {
+  font-family: var(--mono);
+  font-size: calc(8px * var(--ui-scale));
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: rgb(var(--warm));
+  opacity: 0.62;
+  white-space: nowrap;
+}
+.c-sun {
+  position: absolute;
+  top: 10px;
+  width: 7px; height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: rgb(var(--warm));
+  opacity: 0.5;
+  box-shadow: 0 0 7px rgba(255, 198, 122, 0.55);
+  will-change: transform;
+}
+
+/* ----------------------------------------------------------- corner data -- */
+
+.hud-tl {
+  position: absolute;
+  left: calc(var(--safe-l) + 18px);
+  top: calc(var(--safe-t) + 16px);
+  display: grid;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 600ms var(--ease);
+}
+.realm-name {
+  font-size: calc(11px * var(--ui-scale));
+  font-weight: 300;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  text-transform: uppercase;
+  color: rgb(var(--ink));
+  opacity: 0.7;
+}
+.realm-sub {
+  font-family: var(--mono);
+  font-size: calc(9px * var(--ui-scale));
+  letter-spacing: 0.1em;
+  color: rgb(var(--dim));
+  opacity: 0.42;
+}
+
+/* Target block, top right. Right-aligned so the eye finds the edge, then the
+ * name, then the numbers — never the other way round. */
+.hud-tr {
+  position: absolute;
+  right: calc(var(--safe-r) + 18px);
+  top: calc(var(--safe-t) + 16px);
+  width: min(230px, 42vw);
+  text-align: right;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 420ms var(--ease), transform 420ms var(--ease);
+}
+.hud-tr.on { opacity: 1; transform: none; }
+.tgt-name {
+  font-size: calc(13px * var(--ui-scale));
+  font-weight: 300;
+  letter-spacing: 0.06em;
+  color: rgb(var(--ink));
+  opacity: 0.9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tgt-class {
+  font-family: var(--mono);
+  font-size: calc(8.5px * var(--ui-scale));
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgb(var(--accent));
+  opacity: 0.62;
+  margin-top: 2px;
+}
+.tgt-rule { height: 1px; background: var(--hair); margin: 7px 0 6px; }
+.tgt-rows { display: grid; gap: 3px; }
+.tgt-row { display: flex; justify-content: flex-end; gap: 10px; align-items: baseline; }
+.tgt-row .k { opacity: 0.38; }
+.tgt-row .v { opacity: 0.72; font-size: calc(10px * var(--ui-scale)); }
+
+/* Vitals, bottom left. Hairline bars — the fill is a scaleX transform so a
+ * draining suit never triggers layout. */
+.vitals {
+  position: absolute;
+  left: calc(var(--safe-l) + 18px);
+  bottom: calc(var(--safe-b) + 16px);
+  display: grid;
+  gap: 7px;
+  width: 132px;
+  opacity: 0;
+  transition: opacity 500ms var(--ease);
+}
+.vital { display: grid; gap: 3px; }
+.vital-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.vital-bar { position: relative; height: 1px; background: rgba(216, 240, 255, 0.1); overflow: hidden; }
+.vital-bar i {
+  position: absolute;
+  left: 0; top: 0;
+  width: 100%; height: 100%;
+  background: currentColor;
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 380ms var(--ease);
+}
+.vital.low { color: rgb(var(--danger)); }
+.vital.low .vital-bar i { animation: v-pulse 1.4s ease-in-out infinite; }
+@keyframes v-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+.vital.ok { color: rgb(var(--ink)); }
+.vital.warm { color: rgb(var(--warm)); }
+
+/* ------------------------------------------------------- context actions -- */
+/*
+ * Desktop affordances: a key cap and a verb, bottom centre-right, one line.
+ * They appear only when something is actually actionable, which makes them
+ * read as the world talking rather than as a control reference card.
+ */
+.actions {
+  position: absolute;
+  right: calc(var(--safe-r) + 18px);
+  bottom: calc(var(--safe-b) + 16px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 300ms var(--ease);
+}
+.act { display: flex; align-items: center; gap: 8px; opacity: 0.86; }
+.act.disabled { opacity: 0.26; }
+.act kbd {
+  font-family: var(--mono);
+  font-size: calc(8.5px * var(--ui-scale));
+  letter-spacing: 0.06em;
+  line-height: 1;
+  padding: 3px 5px 3px 6px;
+  min-width: 17px;
+  text-align: center;
+  color: rgb(var(--ink));
+  opacity: 0.72;
+  border: 1px solid var(--hair-2);
+  border-radius: 2px;
+}
+.act span {
+  font-size: calc(10px * var(--ui-scale));
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgb(var(--dim));
+  opacity: 0.72;
+}
+
+/* ---------------------------------------------------------------- toasts -- */
+
+.toasts {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--safe-t) + 52px);
+  transform: translateX(-50%);
+  display: grid;
+  gap: 5px;
+  justify-items: center;
+  width: max-content;
+  max-width: 78vw;
+}
+.toast {
+  font-family: var(--mono);
+  font-size: calc(9.5px * var(--ui-scale));
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgb(var(--ink));
+  opacity: 0;
+  text-align: center;
+  animation: toast-in 340ms var(--ease) both;
+}
+.toast.warn { color: rgb(var(--warm)); }
+.toast.bad { color: rgb(var(--danger)); }
+.toast.out { animation: toast-out 460ms var(--ease-io) both; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 0.78; transform: none; } }
+@keyframes toast-out { from { opacity: 0.78; } to { opacity: 0; transform: translateY(-4px); } }
+
+/* ------------------------------------------------------------- discovery -- */
+/*
+ * The one moment the UI is allowed to be loud. Left-anchored on the lower
+ * third with a rule that draws itself, in the register of a title card: the
+ * kind of thing, then the name, then a quiet line of fact. It occupies the
+ * screen for four seconds and then it is gone forever.
+ */
+.discovery {
+  position: absolute;
+  left: calc(var(--safe-l) + 40px);
+  bottom: 26vh;
+  width: min(520px, 62vw);
+  opacity: 0;
+  pointer-events: none;
+}
+.discovery.on { animation: disc-hold 5200ms linear both; }
+@keyframes disc-hold { 0%, 100% { opacity: 1; } }
+.disc-kind {
+  font-family: var(--mono);
+  font-size: calc(9px * var(--ui-scale));
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: rgb(var(--accent));
+  opacity: 0;
+}
+.discovery.on .disc-kind { animation: d-fade 5200ms var(--ease) both; }
+.disc-rule {
+  height: 1px;
+  margin: 9px 0 11px;
+  background: linear-gradient(90deg, rgba(122, 214, 255, 0.6), rgba(216, 240, 255, 0.08) 62%, transparent);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+.discovery.on .disc-rule { animation: d-rule 5200ms var(--ease) both; }
+.disc-name {
+  font-size: calc(30px * var(--ui-scale));
+  font-weight: 200;
+  letter-spacing: 0.015em;
+  line-height: 1.1;
+  color: rgb(var(--ink));
+  opacity: 0;
+}
+.discovery.on .disc-name { animation: d-name 5200ms var(--ease) both; }
+.disc-sub {
+  margin-top: 9px;
+  font-size: calc(11.5px * var(--ui-scale));
+  font-weight: 300;
+  letter-spacing: 0.1em;
+  color: rgb(var(--dim));
+  opacity: 0;
+}
+.discovery.on .disc-sub { animation: d-sub 5200ms var(--ease) both; }
+@keyframes d-fade { 0% { opacity: 0; } 6% { opacity: 0.85; } 82% { opacity: 0.85; } 100% { opacity: 0; } }
+@keyframes d-rule { 0% { transform: scaleX(0); } 22% { transform: scaleX(1); } 84% { transform: scaleX(1); } 100% { transform: scaleX(1); opacity: 0; } }
+@keyframes d-name {
+  0% { opacity: 0; transform: translateY(9px); }
+  20% { opacity: 0.96; transform: none; }
+  80% { opacity: 0.96; transform: none; }
+  100% { opacity: 0; transform: translateY(-4px); }
+}
+@keyframes d-sub { 0%, 14% { opacity: 0; } 30% { opacity: 0.6; } 80% { opacity: 0.6; } 100% { opacity: 0; } }
+
+/* ------------------------------------------------------------- subtitles -- */
+
+.subs {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--safe-b) + 15vh);
+  transform: translateX(-50%);
+  width: min(46em, 78vw);
+  text-align: center;
+  opacity: 0;
+  transition: opacity 520ms var(--ease);
+}
+.subs.on { opacity: 1; }
+.sub-line {
+  font-size: calc(14px * var(--ui-scale));
+  font-weight: 300;
+  line-height: 1.55;
+  letter-spacing: 0.02em;
+  color: rgb(var(--ink));
+  opacity: 0.86;
+  /* A whisper of shadow so a line of narration survives a white sun behind it
+   * without needing a box. */
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.7);
+  text-wrap: balance;
+}
+.sub-who {
+  display: block;
+  margin-bottom: 5px;
+  font-family: var(--mono);
+  font-size: calc(8.5px * var(--ui-scale));
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgb(var(--accent));
+  opacity: 0.55;
+}
+
+/* ------------------------------------------------------------ scan layer -- */
+
+.scan-pulse {
+  position: absolute;
+  left: 0; top: 0;
+  width: 2px; height: 2px;
+  margin: -1px 0 0 -1px;
+  border-radius: 50%;
+  border: 1px solid rgb(var(--accent));
+  opacity: 0;
+  will-change: transform, opacity;
+}
+.scan-pulse.go { animation: scan-ring 2600ms cubic-bezier(0.12, 0.7, 0.25, 1) both; }
+@keyframes scan-ring {
+  0%   { opacity: 0.55; transform: scale(1); }
+  70%  { opacity: 0.13; }
+  100% { opacity: 0; transform: scale(760); }
+}
+
+.callout {
+  position: absolute;
+  left: 0; top: 0;
+  will-change: transform, opacity;
+  opacity: 0;
+  transition: opacity 260ms var(--ease);
+}
+.callout.on { opacity: 1; }
+.callout .co-dot {
+  position: absolute;
+  left: -2px; top: -2px;
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: rgb(var(--accent));
+  opacity: 0.85;
+}
+.callout .co-leg {
+  position: absolute;
+  left: 0; top: 0;
+  height: 1px;
+  background: rgba(122, 214, 255, 0.28);
+  transform-origin: left center;
+}
+.callout .co-body {
+  position: absolute;
+  padding-left: 7px;
+  border-left: 1px solid rgba(122, 214, 255, 0.3);
+  white-space: nowrap;
+}
+.callout .co-label {
+  font-size: calc(10.5px * var(--ui-scale));
+  font-weight: 300;
+  letter-spacing: 0.09em;
+  color: rgb(var(--ink));
+  opacity: 0.88;
+}
+.callout .co-sub {
+  font-family: var(--mono);
+  font-size: calc(8.5px * var(--ui-scale));
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgb(var(--dim));
+  opacity: 0.5;
+  margin-top: 1px;
+}
+.callout.flip .co-body { text-align: right; padding-left: 0; padding-right: 7px; border-left: 0; border-right: 1px solid rgba(122, 214, 255, 0.3); }
+
+/* -------------------------------------------------------- touch controls -- */
+/*
+ * The stick is drawn, never placed. Input owns the geometry; this is a
+ * visualisation of a value that already exists, which is why it can never
+ * disagree with what the thumb is doing. Both rings are far below the opacity
+ * you would choose if you wanted them noticed — you are meant to feel them,
+ * glance down once, and never look again.
+ */
+.stick {
+  position: absolute;
+  left: 0; top: 0;
+  width: 0; height: 0;
+  opacity: 0;
+  transition: opacity 180ms linear;
+  will-change: transform, opacity;
+}
+.stick.on { opacity: 1; }
+.stick-ring {
+  position: absolute;
+  left: 0; top: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(216, 240, 255, 0.22);
+  will-change: transform;
+  transform: translate(-50%, -50%);
+}
+.stick-knob {
+  position: absolute;
+  left: 0; top: 0;
+  width: 26px; height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  background: rgba(216, 240, 255, 0.16);
+  box-shadow: 0 0 0 1px rgba(216, 240, 255, 0.2) inset;
+  will-change: transform;
+}
+
+.pad {
+  position: absolute;
+  right: 0; bottom: 0;
+  width: 0; height: 0;
+}
+.pad-btn {
+  position: absolute;
+  left: 0; top: 0;
+  width: var(--hit);
+  height: var(--hit);
+  margin: calc(var(--hit) / -2) 0 0 calc(var(--hit) / -2);
+  display: grid;
+  place-items: center;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: rgb(var(--ink));
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  will-change: transform, opacity;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 240ms var(--ease), transform 240ms var(--ease);
+}
+.pad-btn.on { opacity: 1; transform: none; }
+.pad-btn.disabled { opacity: 0.28; }
+/* Visual is 28px inside a 44px target: the finger gets the area, the eye gets
+ * the restraint. */
+.pad-face {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(216, 240, 255, 0.22);
+  display: grid;
+  place-items: center;
+  transition: transform 130ms var(--ease), border-color 130ms linear, background-color 130ms linear;
+}
+.pad-btn.primary .pad-face { width: 36px; height: 36px; border-color: rgba(216, 240, 255, 0.34); }
+.pad-btn:active .pad-face,
+.pad-btn.held .pad-face {
+  transform: scale(0.86);
+  background: rgba(122, 214, 255, 0.16);
+  border-color: rgba(122, 214, 255, 0.7);
+}
+.pad-btn:focus-visible .pad-face { border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgba(122, 214, 255, 0.28); }
+.pad-glyph {
+  font-family: var(--mono);
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  opacity: 0.8;
+  pointer-events: none;
+}
+.pad-btn.primary .pad-glyph { font-size: calc(11.5px * var(--ui-scale)); }
+/* The label rides outside the ring, on the side away from the screen edge. */
+.pad-label {
+  position: absolute;
+  right: calc(100% - 4px);
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--mono);
+  font-size: calc(8px * var(--ui-scale));
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgb(var(--dim));
+  opacity: 0;
+  white-space: nowrap;
+  transition: opacity 200ms var(--ease);
+}
+.pad-btn.labelled .pad-label { opacity: 0.44; }
+
+/* ----------------------------------------------------------- panel shell -- */
+/*
+ * Codex and Settings share one shell. The scrim is a radial black rather than
+ * a flat one: the universe is still faintly there at the edges, which keeps a
+ * full-screen panel from feeling like the app quit.
+ */
+.panel {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  background: radial-gradient(ellipse at 50% 45%, rgba(0, 0, 0, 0.9), #000 72%);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 320ms var(--ease), visibility 0s linear 320ms;
+}
+.panel.open { opacity: 1; visibility: visible; transition: opacity 320ms var(--ease), visibility 0s; }
+.panel-inner {
+  width: min(1080px, 100%);
+  margin: 0 auto;
+  padding: calc(var(--safe-t) + 34px) calc(var(--safe-r) + 26px)
+           calc(var(--safe-b) + 22px) calc(var(--safe-l) + 26px);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 20px;
+  min-height: 0;
+  transform: translateY(10px);
+  transition: transform 420ms var(--ease);
+}
+.panel.open .panel-inner { transform: none; }
+.panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.panel-title {
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 300;
+  letter-spacing: 0.46em;
+  text-indent: 0.46em;
+  text-transform: uppercase;
+  color: rgb(var(--ink));
+  opacity: 0.82;
+}
+.panel-hint {
+  font-family: var(--mono);
+  font-size: calc(8.5px * var(--ui-scale));
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgb(var(--dim));
+  opacity: 0.36;
+}
+.panel-body { min-height: 0; display: grid; }
+
+.scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(216, 240, 255, 0.14) transparent;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+.scroll::-webkit-scrollbar { width: 2px; }
+.scroll::-webkit-scrollbar-thumb { background: rgba(216, 240, 255, 0.14); }
+
+/* Focus is never invisible, but it is never a browser default either. */
+.panel :focus { outline: none; }
+.panel :focus-visible {
+  outline: 1px solid rgba(122, 214, 255, 0.8);
+  outline-offset: 2px;
+}
+
+/* ----------------------------------------------------------------- codex -- */
+
+.codex-grid {
+  display: grid;
+  grid-template-columns: minmax(200px, 300px) 1fr;
+  gap: 0;
+  min-height: 0;
+}
+.codex-list { border-right: 1px solid var(--hair); padding-right: 18px; }
+.codex-empty {
+  font-family: var(--mono);
+  font-size: calc(9.5px * var(--ui-scale));
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgb(var(--dim));
+  opacity: 0.32;
+  padding: 8px 0;
+}
+.codex-group {
+  font-family: var(--mono);
+  font-size: calc(8px * var(--ui-scale));
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: rgb(var(--dim));
+  opacity: 0.3;
+  margin: 16px 0 7px;
+}
+.codex-group:first-child { margin-top: 0; }
+.codex-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-left: 1px solid transparent;
+  padding: 6px 0 6px 11px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  transition: border-color 180ms linear, opacity 180ms linear;
+  opacity: 0.62;
+}
+.codex-item:hover { opacity: 0.85; border-left-color: var(--hair-2); }
+.codex-item[aria-selected='true'] { opacity: 1; border-left-color: rgb(var(--accent)); }
+.ci-name {
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 300;
+  letter-spacing: 0.045em;
+  color: rgb(var(--ink));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ci-meta {
+  font-family: var(--mono);
+  font-size: calc(8px * var(--ui-scale));
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgb(var(--dim));
+  opacity: 0.5;
+  margin-top: 2px;
+}
+
+.codex-detail { padding: 2px 4px 40px 26px; }
+.cd-kind {
+  font-family: var(--mono);
+  font-size: calc(8.5px * var(--ui-scale));
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgb(var(--accent));
+  opacity: 0.7;
+}
+.cd-name {
+  font-size: calc(34px * var(--ui-scale));
+  font-weight: 200;
+  letter-spacing: 0.005em;
+  line-height: 1.08;
+  color: rgb(var(--ink));
+  opacity: 0.96;
+  margin: 9px 0 4px;
+  text-wrap: balance;
+}
+.cd-desig {
+  font-family: var(--mono);
+  font-size: calc(9.5px * var(--ui-scale));
+  letter-spacing: 0.2em;
+  color: rgb(var(--dim));
+  opacity: 0.45;
+}
+.cd-rule { height: 1px; background: var(--hair); margin: 20px 0 18px; }
+.cd-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(122px, 1fr));
+  gap: 16px 22px;
+}
+.cd-stat { display: grid; gap: 4px; }
+.cd-stat .v { font-size: calc(14px * var(--ui-scale)); opacity: 0.9; letter-spacing: 0.01em; }
+.cd-stat .u { font-size: 0.7em; opacity: 0.45; margin-left: 3px; letter-spacing: 0.06em; }
+.cd-note {
+  margin-top: 24px;
+  max-width: 54ch;
+  font-size: calc(12.5px * var(--ui-scale));
+  font-weight: 300;
+  line-height: 1.72;
+  letter-spacing: 0.012em;
+  color: rgb(var(--ink));
+  opacity: 0.6;
+}
+/* A habitability meter reads faster than a percentage. Hairline, of course. */
+.cd-hab { margin-top: 22px; display: grid; gap: 6px; max-width: 320px; }
+.cd-hab-bar { height: 1px; background: rgba(216, 240, 255, 0.1); position: relative; overflow: hidden; }
+.cd-hab-bar i {
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, rgba(122, 214, 255, 0.5), rgb(var(--ok)));
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 620ms var(--ease);
+}
+
+/* -------------------------------------------------------------- settings -- */
+
+.set-list { max-width: 560px; padding-bottom: 40px; }
+.set-group {
+  font-family: var(--mono);
+  font-size: calc(8px * var(--ui-scale));
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: rgb(var(--dim));
+  opacity: 0.3;
+  margin: 26px 0 4px;
+}
+.set-group:first-child { margin-top: 0; }
+.set-row {
+  display: grid;
+  grid-template-columns: 1fr minmax(160px, 46%);
+  align-items: center;
+  gap: 18px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--hair);
+}
+.set-label { font-size: calc(12px * var(--ui-scale)); font-weight: 300; letter-spacing: 0.05em; opacity: 0.82; }
+.set-label small {
+  display: block;
+  font-family: var(--mono);
+  font-size: calc(8.5px * var(--ui-scale));
+  letter-spacing: 0.12em;
+  opacity: 0.4;
+  margin-top: 3px;
+  text-transform: none;
+}
+.set-ctl { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+.set-val {
+  font-family: var(--mono);
+  font-size: calc(10px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  opacity: 0.62;
+  min-width: 42px;
+  text-align: right;
+}
+
+/* Range: a hairline with a 9px pip. No track fill, no shadow, no chrome. */
+.set-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  background: none;
+  cursor: pointer;
+  touch-action: pan-y;
+}
+.set-range::-webkit-slider-runnable-track { height: 1px; background: rgba(216, 240, 255, 0.18); }
+.set-range::-moz-range-track { height: 1px; background: rgba(216, 240, 255, 0.18); }
+.set-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 9px; height: 9px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: rgb(var(--ink));
+  border: 0;
+  transition: transform 130ms var(--ease), background-color 130ms linear;
+}
+.set-range::-moz-range-thumb {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: rgb(var(--ink));
+  border: 0;
+}
+.set-range:hover::-webkit-slider-thumb,
+.set-range:focus-visible::-webkit-slider-thumb { background: rgb(var(--accent)); transform: scale(1.25); }
+
+/* Segmented control: text only, the active item marked by a rule under it. */
+.seg { display: flex; gap: 2px; flex-wrap: wrap; justify-content: flex-end; }
+.seg button {
+  background: none;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  padding: 4px 7px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: calc(9px * var(--ui-scale));
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgb(var(--dim));
+  opacity: 0.45;
+  transition: opacity 160ms linear, color 160ms linear, border-color 160ms linear;
+}
+.seg button:hover { opacity: 0.8; }
+.seg button[aria-pressed='true'] { opacity: 1; color: rgb(var(--ink)); border-bottom-color: rgb(var(--accent)); }
+
+/* Toggle: a 26x14 hairline capsule with a 8px pip. Transform only. */
+.tog {
+  position: relative;
+  width: 26px; height: 14px;
+  border-radius: 7px;
+  border: 1px solid rgba(216, 240, 255, 0.22);
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  flex: none;
+  transition: border-color 180ms linear;
+}
+.tog i {
+  position: absolute;
+  left: 2px; top: 2px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: rgba(216, 240, 255, 0.5);
+  transition: transform 200ms var(--ease), background-color 200ms linear;
+}
+.tog[aria-pressed='true'] { border-color: rgba(122, 214, 255, 0.65); }
+.tog[aria-pressed='true'] i { transform: translateX(12px); background: rgb(var(--accent)); }
+
+/* ------------------------------------------------------------ photo mode -- */
+
+.photo {
+  position: fixed;
+  inset: 0;
+  z-index: 18;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 300ms var(--ease), visibility 0s linear 300ms;
+}
+.photo.open { opacity: 1; visibility: visible; transition: opacity 300ms var(--ease), visibility 0s; }
+/* Academy framing marks: four corner brackets, nothing else in the frame. */
+.photo-frame { position: absolute; inset: 3.4vmin; }
+.photo-frame i {
+  position: absolute;
+  width: 18px; height: 18px;
+  border: 1px solid rgba(216, 240, 255, 0.16);
+}
+.photo-frame i:nth-child(1) { left: 0; top: 0; border-right: 0; border-bottom: 0; }
+.photo-frame i:nth-child(2) { right: 0; top: 0; border-left: 0; border-bottom: 0; }
+.photo-frame i:nth-child(3) { left: 0; bottom: 0; border-right: 0; border-top: 0; }
+.photo-frame i:nth-child(4) { right: 0; bottom: 0; border-left: 0; border-top: 0; }
+.photo-bars { position: absolute; inset: 0; }
+.photo-bars i {
+  position: absolute; left: 0; right: 0;
+  height: 0;
+  background: #000;
+  transition: height 420ms var(--ease);
+}
+.photo-bars i:first-child { top: 0; }
+.photo-bars i:last-child { bottom: 0; }
+
+.photo-dock {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--safe-b) + 16px);
+  transform: translateX(-50%);
+  width: min(720px, calc(100vw - 32px));
+  display: grid;
+  gap: 10px;
+  padding: 14px 18px;
+  background: rgba(0, 0, 0, 0.72);
+  border-top: 1px solid var(--hair);
+}
+.photo-stocks { display: flex; gap: 3px; flex-wrap: wrap; }
+.photo-sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 18px; }
+.photo-slider { display: grid; grid-template-columns: 64px 1fr 40px; align-items: center; gap: 8px; }
+.photo-slider .k { opacity: 0.42; }
+.photo-actions { display: flex; gap: 8px; justify-content: space-between; align-items: center; margin-top: 2px; }
+.btn-ghost {
+  background: none;
+  border: 1px solid var(--hair-2);
+  border-radius: 2px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: calc(9px * var(--ui-scale));
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgb(var(--ink));
+  opacity: 0.66;
+  transition: opacity 160ms linear, border-color 160ms linear;
+}
+.btn-ghost:hover { opacity: 1; border-color: rgba(122, 214, 255, 0.55); }
+.photo-flash {
+  position: fixed;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+.photo-flash.go { animation: ph-flash 380ms var(--ease) both; }
+@keyframes ph-flash { 0% { opacity: 0.55; } 100% { opacity: 0; } }
+
+/* ---------------------------------------------------------------- narrow -- */
+/*
+ * Phone layout. The rule that drives every change here: the middle of the
+ * screen belongs to the universe and to the thumbs, so chrome retreats to the
+ * extreme edges and the compass gives up half its width.
+ */
+@media (max-width: 560px), (max-height: 460px) {
+  :root { --ui-scale: 0.94; }
+  .compass { width: min(300px, 72vw); }
+  .hud-tr { width: min(168px, 46vw); }
+  .vitals { width: 104px; }
+  .discovery { left: calc(var(--safe-l) + 22px); width: calc(100vw - var(--safe-l) - var(--safe-r) - 44px); bottom: 30vh; }
+  .disc-name { font-size: calc(25px * var(--ui-scale)); }
+  .subs { bottom: calc(var(--safe-b) + 19vh); width: min(34em, 86vw); }
+  .sub-line { font-size: calc(13px * var(--ui-scale)); }
+  .codex-grid { grid-template-columns: 1fr; }
+  .codex-list { border-right: 0; border-bottom: 1px solid var(--hair); padding-right: 0; padding-bottom: 12px; max-height: 34vh; }
+  .codex-detail { padding: 16px 0 40px; }
+  .cd-name { font-size: calc(26px * var(--ui-scale)); }
+  .set-row { grid-template-columns: 1fr minmax(130px, 50%); gap: 12px; }
+  .panel-inner { gap: 14px; padding-top: calc(var(--safe-t) + 20px); }
+}
+
+/* Landscape phone: vertical space is the scarce resource. */
+@media (max-height: 460px) {
+  .compass { top: calc(var(--safe-t) + 5px); height: 22px; }
+  .subs { bottom: calc(var(--safe-b) + 11vh); }
+  .discovery { bottom: 34vh; }
+  .codex-list { max-height: 26vh; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* The setting is a user choice, not just an OS one, so it gets its own hook —
+ * and unlike the media query it can be turned on for a specific capture. */
+.hud.calm *, .panel.calm *, body.calm * {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 60ms !important;
 }

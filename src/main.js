@@ -90,11 +90,16 @@ async function main() {
 
   ctx.ready = true;
 
-  // Reveal.
+  // Reveal. `revealed` is a separate signal from `ready` because the capture
+  // rig needs to know the boot overlay is actually gone, not merely that the
+  // engine is alive.
   requestAnimationFrame(() => {
     setTimeout(() => {
       bootEl?.classList.add('done');
-      setTimeout(() => bootEl?.remove(), 1000);
+      setTimeout(() => {
+        bootEl?.remove();
+        ctx.revealed = true;
+      }, 1000);
     }, 260);
   });
 

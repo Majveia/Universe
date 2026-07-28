@@ -108,7 +108,7 @@ async function run() {
   await page.goto(full, { waitUntil: 'load', timeout: TIMEOUT });
 
   // Wait for the app to expose its context — that is the readiness contract.
-  await page.waitForFunction('window.__universe && window.__universe.ready', { timeout: TIMEOUT });
+  await page.waitForFunction('window.__universe && window.__universe.revealed', { timeout: TIMEOUT });
   console.log('[shot] app ready');
 
   for (const spec of shots) {

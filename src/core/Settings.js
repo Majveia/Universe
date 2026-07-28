@@ -62,35 +62,35 @@ const PRESETS = {
     pixelRatio: 1.0, renderScale: 0.7, shadows: false, shadowSize: 512, shadowCascades: 0,
     bloom: true, bloomIterations: 3, dof: false, motionBlur: false, ssao: false,
     volumetrics: 0, atmosphereSteps: 6, cloudSteps: 0, terrainLod: 4, terrainRes: 33,
-    cosmicParticles: 60000, starCount: 30000, vegetationDensity: 0.15, cityDetail: 0.35,
+    cosmicParticles: 150000, starCount: 30000, vegetationDensity: 0.15, cityDetail: 0.35,
     anisotropy: 2, maxLights: 2, waterQuality: 0, aa: 'none',
   },
   [Tier.LOW]: {
     pixelRatio: 1.25, renderScale: 0.8, shadows: true, shadowSize: 1024, shadowCascades: 1,
     bloom: true, bloomIterations: 4, dof: false, motionBlur: false, ssao: false,
     volumetrics: 0.4, atmosphereSteps: 8, cloudSteps: 12, terrainLod: 5, terrainRes: 33,
-    cosmicParticles: 120000, starCount: 60000, vegetationDensity: 0.35, cityDetail: 0.5,
+    cosmicParticles: 400000, starCount: 60000, vegetationDensity: 0.35, cityDetail: 0.5,
     anisotropy: 4, maxLights: 3, waterQuality: 1, aa: 'fxaa',
   },
   [Tier.MEDIUM]: {
     pixelRatio: 1.5, renderScale: 0.9, shadows: true, shadowSize: 1536, shadowCascades: 2,
     bloom: true, bloomIterations: 5, dof: true, motionBlur: false, ssao: true,
     volumetrics: 0.7, atmosphereSteps: 12, cloudSteps: 24, terrainLod: 6, terrainRes: 49,
-    cosmicParticles: 260000, starCount: 120000, vegetationDensity: 0.6, cityDetail: 0.75,
+    cosmicParticles: 900000, starCount: 120000, vegetationDensity: 0.6, cityDetail: 0.75,
     anisotropy: 8, maxLights: 4, waterQuality: 2, aa: 'smaa',
   },
   [Tier.HIGH]: {
     pixelRatio: 2.0, renderScale: 1.0, shadows: true, shadowSize: 2048, shadowCascades: 3,
     bloom: true, bloomIterations: 6, dof: true, motionBlur: true, ssao: true,
     volumetrics: 1.0, atmosphereSteps: 16, cloudSteps: 40, terrainLod: 7, terrainRes: 65,
-    cosmicParticles: 500000, starCount: 250000, vegetationDensity: 1.0, cityDetail: 1.0,
+    cosmicParticles: 1700000, starCount: 250000, vegetationDensity: 1.0, cityDetail: 1.0,
     anisotropy: 16, maxLights: 6, waterQuality: 3, aa: 'smaa',
   },
   [Tier.ULTRA]: {
     pixelRatio: 2.0, renderScale: 1.0, shadows: true, shadowSize: 3072, shadowCascades: 4,
     bloom: true, bloomIterations: 7, dof: true, motionBlur: true, ssao: true,
     volumetrics: 1.0, atmosphereSteps: 24, cloudSteps: 64, terrainLod: 8, terrainRes: 65,
-    cosmicParticles: 900000, starCount: 400000, vegetationDensity: 1.35, cityDetail: 1.25,
+    cosmicParticles: 2700000, starCount: 400000, vegetationDensity: 1.35, cityDetail: 1.25,
     anisotropy: 16, maxLights: 8, waterQuality: 3, aa: 'smaa',
   },
 };
@@ -113,7 +113,7 @@ class SettingsStore {
     this.audio = true;
     this.audioVolume = 0.7;
     this.filmGrain = 1.0;
-    this.chromaticAberration = 1.0;
+    this.chromaticAberration = 0.55;
     this.exposure = 1.0;
     this.reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
