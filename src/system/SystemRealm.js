@@ -298,29 +298,58 @@ export class SystemRealm extends Realm {
    * free-flying position without a jump, so taking manual control never
    * teleports you.
    */
-  focus(index) {
+  focus(index, framing = 'gibbous') {
     const p = this.planets[index];
     if (!p) return;
     const r = p.record.radius;
-    // Three-quarter view from slightly above the orbital plane: enough of the
-    // terminator in frame to read the atmosphere, enough of the lit face to
-    // read the surface.
     // `outward` runs from the star to the planet, so the lit hemisphere faces
-    // -outward. Sitting on the +outward side would frame the night face; the
-    // camera belongs sunward of the planet. Mostly sunward gives a gibbous
-    // disc, and a large sideways component keeps the terminator in shot —
-    // that is where all the atmospheric scattering lives, the limb glow and
-    // the sunset band — while leaving the star itself visible off to one side.
+    // -outward and the night face +outward.
     const outward = this._tmp.copy(p.truePos).normalize();
     const side = new THREE.Vector3().copy(outward).cross(new THREE.Vector3(0, 1, 0)).normalize();
     this.followTarget = p;
-    this.followOffset = new THREE.Vector3()
-      .copy(outward).multiplyScalar(-r * 1.7)
-      .addScaledVector(side, r * 3.0)
-      .add(this._tmp2.set(0, r * 0.85, 0));
-    this.viewPos.copy(p.truePos).add(this.followOffset);
+
+    if (framing === 'crescent') {
+      // Mostly anti-sunward, so the star is behind the planet and only a thin
+      // rind of the disc is lit. The sideways term is what stops it being a
+      // pure eclipse: at dead-on anti-sunward the crescent closes to nothing.
+      // This is the framing that puts the atmospheric limb — the graded band
+      // that runs orange at the terminator and blue at altitude — across the
+      // whole silhouette, which is the entire subject of the shot.
+      this.followOffset = new THREE.Vector3()
+        .copy(outward).multiplyScalar(r * 2.6)
+        .addScaledVector(side, r * 1.7)
+        .add(this._tmp2.set(0, r * 0.45, 0));
+    } else {
+      // Three-quarter view from slightly above the orbital plane: enough of the
+      // terminator in frame to read the atmosphere, enough of the lit face to
+      // read the surface. Mostly sunward gives a gibbous disc, and a large
+      // sideways component keeps the terminator in shot — that is where all the
+      // atmospheric scattering lives, the limb glow and the sunset band — while
+      // leaving the star itself visible off to one side.
+      this.followOffset = new THREE.Vector3()
+        .copy(outward).multiplyScalar(-r * 1.7)
+        .addScaledVector(side, r * 3.0)
+        .add(this._tmp2.set(0, r * 0.85, 0));
+    }
+
     this.viewVel.set(0, 0, 0);
-    const look = this._tmp.copy(p.truePos).sub(this.viewPos).normalize();
+    this.aimAtFollowTarget();
+  }
+
+  /**
+   * Point the camera at whatever it is following, from wherever `followOffset`
+   * currently puts it.
+   *
+   * This is split out because position and aim have to be derived together.
+   * Anything that moves the camera by writing `followOffset` directly and
+   * leaves yaw/pitch alone flies to the new vantage still looking along the old
+   * one — which, for offsets on opposite sides of the body, points at empty sky
+   * and drops the subject out of frame entirely.
+   */
+  aimAtFollowTarget() {
+    if (!this.followTarget || !this.followOffset) return;
+    this.viewPos.copy(this.followTarget.truePos).add(this.followOffset);
+    const look = this._tmp.copy(this.followTarget.truePos).sub(this.viewPos).normalize();
     this.yaw = Math.atan2(-look.x, -look.z);
     this.pitch = Math.asin(clamp(look.y, -1, 1));
   }

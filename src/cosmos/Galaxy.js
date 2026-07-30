@@ -94,7 +94,7 @@ void main(){
   // Colour by stellar temperature, but bias it by where the star sits across
   // the arm. Just inside the ridge is a starburst — hot, short-lived, blue.
   // Behind it the population ages and reddens.
-  float youth = smoothstep(0.55, -0.15, phase) * (1.0 - smoothstep(0.0, 1.2, r * 0.5));
+  float youth = (1.0 - smoothstep(-0.15, 0.55, phase)) * (1.0 - smoothstep(0.0, 1.2, r * 0.5));
   float temp = mix(aStar.x, 22000.0, youth * aStar.z * 0.85);
   vColor = blackbody(temp);
 

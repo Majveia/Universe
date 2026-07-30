@@ -305,7 +305,7 @@ vec3 giantColor(vec3 p, out float turbOut){
 
   vec3 zone = mix(uBase, uAccent, bands);
   // Belts: the darker, deeper, warmer lanes between the bright ammonia zones.
-  zone = mix(zone, uBase * 0.55, smoothstep(0.55, 0.10, bands) * 0.6);
+  zone = mix(zone, uBase * 0.55, (1.0 - smoothstep(0.10, 0.55, bands)) * 0.6);
   zone = mix(zone, uAccent * 1.15, smoothstep(0.72, 0.98, bands) * 0.5);
   // Polar hoods are hazier and greyer than the tropics.
   zone = mix(zone, mix(uBase, vec3(lum(uBase)), 0.6), smoothstep(0.62, 0.98, abs(lat)));
@@ -330,7 +330,7 @@ vec3 cityLights(vec3 p, float h, float coast){
   float grain = exp(-c2.x * c2.x * 120.0);
   float pop = step(c1.z, 0.30 + uCityAmount * 0.45) * (0.25 + c1.z);
   // Ribbons of light between the cores: the road network.
-  float road = smoothstep(0.06, 0.0, abs(c1.y - c1.x)) * 0.35;
+  float road = (1.0 - smoothstep(0.0, 0.06, abs(c1.y - c1.x))) * 0.35;
   float lit = (core + sprawl + road) * pop * (0.35 + 0.85 * grain);
   lit *= coast * step(uSeaLevel, h) * uCityAmount;
   // Sodium vapour warm, LED cool — the mix has been shifting for 20 years and
@@ -621,7 +621,7 @@ void main(){
     if (dens <= 0.001) continue;
     // A little vertical structure so the deck has thickness at the limb.
     float hh = (length(q) - rIn) / max(uShellT, 1e-4);
-    dens *= smoothstep(0.0, 0.25, hh) * smoothstep(1.0, 0.6, hh);
+    dens *= smoothstep(0.0, 0.25, hh) * (1.0 - smoothstep(0.6, 1.0, hh));
 
     float ndl = dot(d, L);
     float w = max(uWrap, 0.12);

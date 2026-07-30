@@ -13,13 +13,30 @@ nobody can say which decision made it one.
 ## How to run a round
 
 ```bash
-npm run build
 node tools/critique.mjs --out shots/critique/round-N
 ```
 
+The harness builds for itself and refuses to run if the build fails, because a
+round captured against a stale `dist/` reviews code that is not the code on disk.
+Pass `--no-build` only when you have just built by hand.
+
 Then look at every frame. Not a sample — every frame. Write the verdict into
 `shots/critique/round-N/VERDICT.md` with a line per shot, and keep the previous
-round on disk so the two can be compared directly.
+round on disk so the two can be compared directly. The frames are gitignored;
+the `VERDICT.md` files are not, so the findings survive the machine that made
+them.
+
+Before blaming a shader, check that the shot is testing what it claims to. A
+criterion is only exercised if the subject can exercise it: judging "albedo
+plausible for the stated type" on an EXOTIC world, or band structure through a
+ring plane crossing the disc, grades the renderer on a frame that was never
+capable of passing. Seeds in `tools/critique.mjs` are chosen for this and each
+carries a note saying what it was chosen for.
+
+And prefer an ablation to an argument. Rendering one layer at a time settles in
+a minute what a plausible-sounding causal story can get wrong for an hour — in
+round 2 the speckle was confidently attributed to the galaxy layer, and turning
+that layer off changed the frame not at all.
 
 ## Scoring
 
@@ -74,8 +91,45 @@ being impressive.
 
 Defects found in earlier rounds, kept here so they are not rediscovered:
 
-- Reversed-edge `smoothstep` is undefined in GLSL and produces hard rectangular
-  artefacts. Always order the edges and negate the argument instead.
+- Reversed-edge `smoothstep` is undefined in GLSL. Always order the edges and
+  negate the argument, or write `1.0 - smoothstep(lo, hi, x)`. Note that the
+  JavaScript helper in `core/Noise.js` *does* handle reversed edges correctly —
+  its denominator goes negative and flips the ramp — so JS call sites are fine
+  and only GLSL ones need fixing. Worth measuring before blaming: on ANGLE /
+  SwiftShader the reversed form returns results identical to the corrected one,
+  so it can sit latent for a long time and then break on a driver that folds it
+  differently. Sweep for it with a script; round 2 found sixteen GLSL sites when
+  the list implied one.
+
+- A vector is only meaningful with the space it lives in. `-(modelViewMatrix *
+  position)` is a **view-space** view direction; comparing its `.y` against a
+  quantity computed in object-local space silently reinterprets "distance above
+  the plane" as "height up the screen", and the discontinuity lands on the middle
+  scanline. If a hard artefact sits at exactly half the frame height or width,
+  suspect a space mismatch before suspecting geometry.
+
+- Coverage and radiance are different quantities. For a participating medium,
+  alpha is extinction along the view path (`1 - exp(-tau)`) and rgb is the light
+  scattered toward the eye; driving alpha from the radiance makes a dimly-lit
+  volume transparent, so stars read straight through a sheet several optical
+  depths thick. Premultiplied alpha lets the shader emit the two independently.
+
+- With equal-mass tracers, density is already encoded in how many land on a
+  pixel. Multiplying each tracer by its own local density on top of that counts
+  the clustering twice and lets the densest few per cent punch through as
+  individual points — the medium is sampled correctly and then buried under its
+  own brightest samples. Keep any per-tracer density exponent below one and let
+  overlap carry the structure.
+
+- Position and aim are one quantity. Any camera API that lets a caller move the
+  viewpoint without re-deriving the look direction will eventually be called that
+  way, and the subject leaves the frame. A near-empty `tris` count in the capture
+  log is the cheapest possible detector for it.
+
+- Rings lit edge-on are *correctly* almost invisible: single-scattering
+  reflectance carries a `mu0/(mu + mu0)` factor, and Saturn all but disappears at
+  equinox. If a ring shot looks empty, check the star's elevation above the ring
+  plane before touching the shader.
 - Additive blending integrates the full depth of a volume, which averages
   independent structures together and cancels them. Depth extinction is what
   restores a legible slab.

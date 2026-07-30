@@ -158,7 +158,7 @@ float envelope(vec3 p){
     float shell = exp(-sqr((r - 0.58) / 0.16));
     float waist = exp(-sqr((rho - 0.34) / 0.14)) * exp(-sqr(p.y / 0.12));
     float lobe  = exp(-sqr((r - 0.50 - 0.34 * lat * lat) / 0.20)) * (lat * lat);
-    return (shell * 0.50 + waist * 1.30 + lobe * 1.15) * smoothstep(1.20, 0.86, r);
+    return (shell * 0.50 + waist * 1.30 + lobe * 1.15) * (1.0 - smoothstep(0.86, 1.20, r));
   }
 
   if (uType == 4){
@@ -166,7 +166,7 @@ float envelope(vec3 p){
     // instability at the contact discontinuity between ejecta and swept-up ISM.
     // That instability is why Cas A and the Veil are filaments and not a bubble.
     float shell = exp(-sqr((r - 0.76) / 0.115));
-    return shell * smoothstep(1.12, 0.90, r);
+    return shell * (1.0 - smoothstep(0.90, 1.12, r));
   }
 
   if (uType == 2){
@@ -176,12 +176,12 @@ float envelope(vec3 p){
     vec3 q = p - vec3(0.0, 0.0, -0.22);
     float head = exp(-dot(q, q) * 3.2);
     float tail = exp(-sqr((p.z - 0.42) / 0.52)) * exp(-(p.x * p.x + p.y * p.y) * 6.5);
-    return (head + tail * 0.60) * smoothstep(1.15, 0.80, r);
+    return (head + tail * 0.60) * (1.0 - smoothstep(0.80, 1.15, r));
   }
 
   // Emission / reflection: a giant molecular cloud, centrally condensed and
   // fading into the intercloud medium rather than ending at a surface.
-  return exp(-r * r * 1.45) * smoothstep(1.22, 0.70, r);
+  return exp(-r * r * 1.45) * (1.0 - smoothstep(0.70, 1.22, r));
 }
 
 // The cavity an embedded OB association has blown. Ionising flux destroys

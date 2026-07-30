@@ -33,12 +33,12 @@ import { clamp } from '../core/Noise.js';
 
 const RING_VERT = /* glsl */ `
 varying vec3 vLocal;
-varying vec3 vWorldDir;
 void main(){
+  // Only the ring-local position is interpolated. The view direction is
+  // reconstructed in the fragment shader from uCamLocal, which is already in
+  // this space — see the note on muV below for why that matters.
   vLocal = position;
-  vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  vWorldDir = -mv.xyz;
-  gl_Position = projectionMatrix * mv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
 
@@ -62,7 +62,6 @@ uniform vec4  uGapWidthA;
 uniform vec4  uGapWidthB;
 
 varying vec3 vLocal;
-varying vec3 vWorldDir;
 
 // Optical depth across the ring plane. Everything downstream is a function of
 // this one number, which is what makes the lit/unlit inversion fall out
@@ -108,7 +107,14 @@ void main(){
   float tau = opticalDepth(t);
   if (tau < 0.002) discard;
 
-  vec3 V = normalize(vWorldDir);
+  // The view direction has to be in the SAME space as the plane normal and as
+  // uSunLocal, and that space is ring-local. Interpolating -(modelViewMatrix *
+  // position) instead gives a view-space vector, whose y is "how far up the
+  // screen this fragment is" rather than "how far off the ring plane the eye
+  // is". Every term below keys off V.y, so that mistake put a hard horizontal
+  // seam across the frame exactly where view-space y changed sign — the middle
+  // scanline — with the lit and unlit branches on opposite sides of it.
+  vec3 V = normalize(uCamLocal - vLocal);
   // The plane normal is local +Y. Grazing views look through far more
   // material, which is why rings brighten and then vanish as they close up.
   float muV = max(abs(V.y), 0.06);
@@ -153,7 +159,7 @@ void main(){
   vec3 P = vLocal;
   float alongSun = dot(P, uSunLocal);
   float perpDist = length(P - uSunLocal * alongSun);
-  float behind = smoothstep(0.0, -0.35, alongSun);
+  float behind = 1.0 - smoothstep(-0.35, 0.0, alongSun);
   float inCylinder = 1.0 - smoothstep(0.90, 1.08, perpDist);
   float shadow = 1.0 - behind * inCylinder * 0.97;
 
@@ -162,7 +168,17 @@ void main(){
   vec3 col = mix(uTint * vec3(1.06, 0.98, 0.90), uTint, smoothstep(0.2, 1.4, tau));
   col *= uSunColor;
 
-  float alpha = clamp(single * uOpacity * shadow, 0.0, 1.0);
+  // How much of the background the sheet hides is a question about extinction
+  // along the view path, and nothing else. Deriving it from the scattered
+  // radiance conflated two different quantities — how much light the ring sends
+  // at the eye, and how
+  // much it stops from behind — so a ring that merely scattered weakly went
+  // see-through: at low sun elevation, or on the backscatter side, the starfield
+  // read straight through annuli several optical depths thick. Opacity is
+  // 1 - exp(-tauV); the shadow term has no business in it either, because a ring
+  // in the planet's umbra is unlit, not absent.
+  float opacity = clamp((1.0 - exp(-tauV)) * uOpacity, 0.0, 1.0);
+
   // Even in the umbra the rings are not black: they catch planetshine.
   vec3 rgb = col * single * uSunIntensity * shadow + uTint * 0.012 * (1.0 - shadow);
 
@@ -170,7 +186,11 @@ void main(){
   // output bands into visible contour lines.
   rgb += (ign(gl_FragCoord.xy) - 0.5) / 255.0;
 
-  gl_FragColor = vec4(max(rgb, 0.0), alpha);
+  // Premultiplied: rgb is the radiance the sheet adds, alpha is what it blocks.
+  // That is exactly the emission-plus-transmittance form volumetric compositing
+  // wants, and it keeps the two independent instead of tying brightness to
+  // coverage.
+  gl_FragColor = vec4(max(rgb, 0.0), opacity);
 }
 `;
 
@@ -239,8 +259,10 @@ export class Rings {
       transparent: true,
       // Normal blending, not additive: rings genuinely occlude what is behind
       // them, and additive would make the planet visible straight through the
-      // densest annuli.
+      // densest annuli. Premultiplied so the shader can emit radiance and
+      // coverage as the independent quantities they are.
       blending: THREE.NormalBlending,
+      premultipliedAlpha: true,
       side: THREE.DoubleSide,
       depthWrite: false,
       depthTest: true,
