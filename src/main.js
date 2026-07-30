@@ -14,6 +14,7 @@ import { Director, Scale } from './core/Director.js';
 import { settings } from './core/Settings.js';
 
 import { CosmosRealm } from './cosmos/CosmosRealm.js';
+import { SystemRealm } from './system/SystemRealm.js';
 
 const bootEl = document.getElementById('boot');
 const bootSub = document.getElementById('boot-sub');
@@ -64,6 +65,26 @@ async function main() {
 
   await boot('seeding structure formation');
   director.register(Scale.COSMOS, new CosmosRealm(ctx));
+  director.register(Scale.SYSTEM, new SystemRealm(ctx));
+
+  // Descending a scale is the core verb of the whole thing, so it gets a key,
+  // a gesture and a programmatic hook rather than being buried in a menu.
+  ctx.descend = async (seed) => {
+    if (director.currentKey === Scale.COSMOS) {
+      await director.goTo(Scale.SYSTEM, { seed: seed ?? (Math.floor(Date.now() / 1000) & 0xffff) }, 'warp', 1.8);
+      ctx.scale = Scale.SYSTEM;
+    }
+  };
+  ctx.ascend = async () => {
+    if (director.currentKey !== Scale.COSMOS) {
+      await director.goTo(Scale.COSMOS, {}, 'warp', 1.6);
+      ctx.scale = Scale.COSMOS;
+    }
+  };
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Enter') ctx.descend();
+    if (e.code === 'Backspace') ctx.ascend();
+  });
 
   await boot('collapsing dark matter');
   await director.ensureBuilt(Scale.COSMOS);
@@ -90,11 +111,16 @@ async function main() {
 
   ctx.ready = true;
 
-  // Reveal.
+  // Reveal. `revealed` is a separate signal from `ready` because the capture
+  // rig needs to know the boot overlay is actually gone, not merely that the
+  // engine is alive.
   requestAnimationFrame(() => {
     setTimeout(() => {
       bootEl?.classList.add('done');
-      setTimeout(() => bootEl?.remove(), 1000);
+      setTimeout(() => {
+        bootEl?.remove();
+        ctx.revealed = true;
+      }, 1000);
     }, 260);
   });
 

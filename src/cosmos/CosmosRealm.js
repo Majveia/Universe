@@ -1,9 +1,10 @@
 /**
  * The largest scale. You are outside everything, looking at the scaffolding.
  *
- * The camera drifts on a slow orbital rail unless the user takes hold of it.
- * Nothing here is interactive in the twitch sense — this scale is meant to be
- * contemplative, a held wide shot before the descent.
+ * This scale is deliberately contemplative — a held wide shot before the
+ * descent. The camera drifts on a slow rail unless the user takes hold of it,
+ * and hands control back a few seconds after they let go, so the shot is never
+ * dead but never fights them either.
  */
 
 import * as THREE from 'three';
@@ -14,46 +15,43 @@ import { settings } from '../core/Settings.js';
 import { damp, clamp } from '../core/Noise.js';
 import { GLSL_LIB } from '../shaders/common.js';
 
-const GALAXY_VERT = /* glsl */ `
-precision highp float;
-uniform float uTime;
-uniform float uScale;
-attribute float aSize;
-attribute vec3 aColor;
-attribute float aSpin;
-varying vec3 vColor;
-varying float vFade;
-void main(){
-  vColor = aColor;
-  vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  float d = -mv.z;
-  vFade = smoothstep(0.5, 6.0, d) * (1.0 - smoothstep(120.0, 300.0, d));
-  gl_Position = projectionMatrix * mv;
-  gl_PointSize = clamp(aSize * uScale / max(d, 0.5) * 300.0, 2.0, 90.0);
-}
-`;
-
-const GALAXY_FRAG = /* glsl */ `
+/**
+ * The cosmic microwave background, rendered on the inside of a very large
+ * sphere. It is the oldest light there is and it is genuinely everywhere, so
+ * having it as the literal backdrop is both accurate and the right way to keep
+ * the void from reading as an empty buffer. Amplitude is exaggerated far beyond
+ * the real 1-part-in-10^5 anisotropy, or it would be invisible.
+ */
+const CMB_FRAG = /* glsl */ `
 precision highp float;
 ${GLSL_LIB}
 uniform float uTime;
-uniform float uBrightness;
-varying vec3 vColor;
-varying float vFade;
+uniform float uStrength;
+varying vec3 vDir;
+
 void main(){
-  vec2 uv = gl_PointCoord * 2.0 - 1.0;
-  float r = length(uv);
-  if (r > 1.0) discard;
-  float ang = atan(uv.y, uv.x);
-  // Two-armed logarithmic spiral, faded into a bulge. Cheap, but at this
-  // distance it is exactly the amount of structure the eye needs to read
-  // "galaxy" rather than "dot".
-  float spiral = 0.5 + 0.5 * cos(2.0 * (ang - log(max(r, 0.04)) * 3.2));
-  float disc = exp(-r * r * 3.4) * (0.35 + 0.65 * spiral);
-  float bulge = exp(-r * r * 26.0) * 1.8;
-  float a = disc + bulge;
-  vec3 col = mix(vColor, vec3(1.0, 0.94, 0.86), bulge * 0.55);
-  gl_FragColor = vec4(col * a * uBrightness, a * vFade);
+  vec3 d = normalize(vDir);
+  // A few octaves standing in for the acoustic peaks — the characteristic
+  // angular scale of the first peak is about a degree, which at this radius is
+  // roughly the frequency of the second term.
+  float t = fbm(d * 3.1, 3) * 0.6 + fbm(d * 9.4, 3) * 0.3 + fbm(d * 24.0, 2) * 0.1;
+  // Map fluctuation to a cold/hot dipole around the 2.725 K mean.
+  vec3 cold = vec3(0.02, 0.05, 0.16);
+  vec3 hot  = vec3(0.20, 0.06, 0.10);
+  vec3 col = mix(cold, hot, smoothstep(-0.35, 0.35, t));
+  col *= uStrength;
+  // Dither hard — this is a near-black gradient covering the whole sphere,
+  // exactly the case where 8-bit output bands catastrophically on an OLED.
+  col += (ign(gl_FragCoord.xy) - 0.5) / 255.0;
+  gl_FragColor = vec4(max(col, 0.0), 1.0);
+}
+`;
+
+const CMB_VERT = /* glsl */ `
+varying vec3 vDir;
+void main(){
+  vDir = position;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
 
@@ -61,156 +59,82 @@ export class CosmosRealm extends Realm {
   constructor(ctx) {
     super(ctx);
     this.near = 0.05;
-    this.far = 4000;
+    this.far = 6000;
     this.ambience = 'cosmos';
-    this.orbit = { theta: 0.6, phi: 1.15, radius: 44, target: new THREE.Vector3() };
-    this.autoRotate = true;
-    this._idle = 0;
+    this.orbit = { theta: 0.6, phi: 1.05, radius: 26, target: new THREE.Vector3() };
+    this._idle = 10;
+    this._radiusTarget = 26;
   }
 
   async build() {
     const scene = this.scene;
     scene.background = new THREE.Color(0x000000);
 
-    this.web = new CosmicWeb({ seed: 20260728, boxSize: 34, count: settings.cosmicParticles });
-    this.web.setViewportHeight(this.ctx.engine.renderer.getDrawingBufferSize(new THREE.Vector2()).y);
-    this.ctx.engine.onResize(() => {
-      this.web.setViewportHeight(this.ctx.engine.renderer.getDrawingBufferSize(new THREE.Vector2()).y);
+    const buf = this.ctx.engine.renderer.getDrawingBufferSize(new THREE.Vector2());
+
+    this.web = new CosmicWeb({
+      seed: 20260728,
+      boxSize: 36,
+      count: settings.cosmicParticles,
+      galaxies: Math.round(settings.cosmicParticles * 0.05),
     });
+    this.web.setViewportHeight(buf.y);
     scene.add(this.web.object3d);
 
-    // Galaxies live where the web is densest. We do not have the density field
-    // on the CPU, so we sample the same potential the shader uses via a coarse
-    // proxy: cluster galaxies around randomised filament seeds.
-    this._buildGalaxies();
+    this._offResize = this.ctx.engine.onResize(() => {
+      const b = this.ctx.engine.renderer.getDrawingBufferSize(new THREE.Vector2());
+      this.web.setViewportHeight(b.y);
+    });
 
-    // A very faint far-field of unresolved galaxies so the void is never empty.
-    this._buildDeepField();
+    this._buildCMB();
 
     return this;
   }
 
-  _buildGalaxies() {
-    const rng = new Rng(777);
-    const count = Math.round(2400 * (settings.tier >= 3 ? 1 : 0.5));
-    const pos = new Float32Array(count * 3);
-    const size = new Float32Array(count);
-    const color = new Float32Array(count * 3);
-    const spin = new Float32Array(count);
-
-    // Place clusters, then scatter members with a power-law radius so groups
-    // look gravitationally bound rather than uniformly sprinkled.
-    const clusters = [];
-    for (let i = 0; i < 46; i++) {
-      clusters.push({
-        x: rng.range(-15, 15), y: rng.range(-12, 12), z: rng.range(-15, 15),
-        r: rng.range(0.7, 4.0), n: rng.int(8, 90),
-      });
-    }
-    const c = new THREE.Color();
-    let i = 0;
-    while (i < count) {
-      const cl = rng.pick(clusters);
-      const d = Math.pow(rng.next(), 2.2) * cl.r;
-      const dir = rng.onSphere();
-      pos[i * 3] = cl.x + dir.x * d;
-      pos[i * 3 + 1] = cl.y + dir.y * d * 0.75;
-      pos[i * 3 + 2] = cl.z + dir.z * d;
-      size[i] = rng.range(0.006, 0.05) * (d < cl.r * 0.25 ? 1.9 : 1.0);
-      spin[i] = rng.range(0, Math.PI * 2);
-      // Redder toward cluster cores (old ellipticals), bluer in the field
-      // (star-forming spirals). That colour-density relation is real.
-      const core = 1 - clamp(d / cl.r, 0, 1);
-      c.setHSL(0.58 - core * 0.5 + rng.range(-0.05, 0.05), 0.55, 0.62);
-      color[i * 3] = c.r;
-      color[i * 3 + 1] = c.g;
-      color[i * 3 + 2] = c.b;
-      i++;
-    }
-
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
-    geo.setAttribute('aColor', new THREE.BufferAttribute(color, 3));
-    geo.setAttribute('aSpin', new THREE.BufferAttribute(spin, 1));
-    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60);
-
-    this.galaxyMat = new THREE.ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, uScale: { value: 1 }, uBrightness: { value: 0.85 } },
-      vertexShader: GALAXY_VERT,
-      fragmentShader: GALAXY_FRAG,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
+  _buildCMB() {
+    const geo = new THREE.SphereGeometry(2600, 48, 32);
+    this.cmbMat = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 }, uStrength: { value: 0.055 } },
+      vertexShader: CMB_VERT,
+      fragmentShader: CMB_FRAG,
+      side: THREE.BackSide,
       depthWrite: false,
+      depthTest: false,
     });
-    this.galaxies = new THREE.Points(geo, this.galaxyMat);
-    this.galaxies.frustumCulled = false;
-    this.galaxies.renderOrder = 2;
-    this.scene.add(this.galaxies);
-  }
-
-  _buildDeepField() {
-    const rng = new Rng(31415);
-    const n = 9000;
-    const pos = new Float32Array(n * 3);
-    const size = new Float32Array(n);
-    const color = new Float32Array(n * 3);
-    const spin = new Float32Array(n);
-    const c = new THREE.Color();
-    for (let i = 0; i < n; i++) {
-      const d = rng.onSphere();
-      const r = 150 + Math.pow(rng.next(), 0.4) * 900;
-      pos[i * 3] = d.x * r;
-      pos[i * 3 + 1] = d.y * r;
-      pos[i * 3 + 2] = d.z * r;
-      size[i] = rng.range(0.6, 3.5);
-      spin[i] = 0;
-      // Everything this far away is cosmologically redshifted.
-      c.setHSL(rng.range(0.02, 0.12), 0.5, rng.range(0.35, 0.6));
-      color[i * 3] = c.r;
-      color[i * 3 + 1] = c.g;
-      color[i * 3 + 2] = c.b;
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
-    geo.setAttribute('aColor', new THREE.BufferAttribute(color, 3));
-    geo.setAttribute('aSpin', new THREE.BufferAttribute(spin, 1));
-    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1100);
-    const mat = this.galaxyMat.clone();
-    mat.uniforms.uScale.value = 0.22;
-    mat.uniforms.uBrightness.value = 0.18;
-    this.deepField = new THREE.Points(geo, mat);
-    this.deepField.frustumCulled = false;
-    this.scene.add(this.deepField);
+    this.cmb = new THREE.Mesh(geo, this.cmbMat);
+    this.cmb.frustumCulled = false;
+    this.cmb.renderOrder = -1;
+    this.scene.add(this.cmb);
   }
 
   enter() {
     const cam = this.ctx.camera;
-    cam.position.set(0, 8, 44);
+    cam.position.set(0, 6, 26);
     cam.lookAt(0, 0, 0);
   }
 
   update(dt, time) {
     const { input, camera } = this.ctx;
     this.web.update(dt, time, camera);
-    this.galaxyMat.uniforms.uTime.value = time;
+    this.cmbMat.uniforms.uTime.value = time;
 
-    // Orbit control. Any input takes over; releasing hands it back to the rail
-    // after a beat, so the shot never sits dead but never fights the user.
-    const dragging = input.down('primary') || input.usingTouch;
-    if (Math.abs(input.look.x) > 0.0001 || Math.abs(input.look.y) > 0.0001) {
-      if (dragging || input.pointerLocked) {
-        this.orbit.theta -= input.look.x * 1.4;
-        this.orbit.phi = clamp(this.orbit.phi + input.look.y * 1.4, 0.12, Math.PI - 0.12);
-        this._idle = 0;
-      }
+    // Any look input takes the rail over; it resumes after a beat of stillness.
+    const engaged = input.down('primary') || input.pointerLocked || input.usingTouch;
+    if (engaged && (Math.abs(input.look.x) > 1e-4 || Math.abs(input.look.y) > 1e-4)) {
+      this.orbit.theta -= input.look.x * 1.5;
+      this.orbit.phi = clamp(this.orbit.phi + input.look.y * 1.5, 0.14, Math.PI - 0.14);
+      this._idle = 0;
     }
     this._idle += dt;
-    if (this._idle > 3.5) this.orbit.theta += dt * 0.014;
+    if (this._idle > 3.0) this.orbit.theta += dt * 0.016;
 
-    const zoom = input.scroll * 3 - input.pinch * 8 - input.move.y * dt * 14;
-    this.orbit.radius = clamp(this.orbit.radius + zoom, 5, 220);
+    const zoom = input.scroll * 4 - input.pinch * 10 - input.move.y * dt * 18;
+    if (Math.abs(zoom) > 1e-5) this._idle = 0;
+    // Clamped to stay inside the simulation volume — from outside it, the box
+    // reads as a box, and the illusion of an unbounded universe dies.
+    this._radiusTarget = clamp(this._radiusTarget + zoom, 4, 70);
+    // Damped so a scroll wheel glides instead of stepping.
+    this.orbit.radius = damp(this.orbit.radius, this._radiusTarget, 8, dt);
 
     const r = this.orbit.radius;
     const st = Math.sin(this.orbit.phi);
@@ -220,12 +144,13 @@ export class CosmosRealm extends Realm {
       Math.cos(this.orbit.theta) * st * r
     );
     camera.lookAt(this.orbit.target);
+    this.cmb.position.copy(camera.position);
   }
 
   dispose() {
+    this._offResize?.();
     this.web.dispose();
-    this.galaxies.geometry.dispose();
-    this.galaxyMat.dispose();
-    this.deepField.geometry.dispose();
+    this.cmb.geometry.dispose();
+    this.cmbMat.dispose();
   }
 }

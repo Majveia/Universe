@@ -286,9 +286,12 @@ const COMPOSITE_FRAG = /* glsl */ `
       uv = 0.5 + centered * (1.0 + warpAmount * r2 * 1.6);
     }
 
-    // Lateral chromatic aberration: increases with radius like a real lens.
+    // Lateral chromatic aberration, increasing with radius like a real lens.
+    // Kept very subtle: the frame is full of one- and two-pixel highlights
+    // (stars, tracers), and anything stronger fringes every one of them into
+    // rainbow speckle rather than reading as a lens characteristic.
     vec3 color;
-    float ca = aberration * (0.0016 + 0.006 * r2);
+    float ca = aberration * (0.00025 + 0.0016 * r2);
     if (ca > 0.00002){
       vec2 dir = normalize(centered + 1e-6);
       color.r = texture2D(tDiffuse, uv - dir * ca).r;
