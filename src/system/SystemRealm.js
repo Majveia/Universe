@@ -34,6 +34,7 @@ import { Star } from './Star.js';
 import { PlanetBody } from './PlanetBody.js';
 import { Rings } from './Rings.js';
 import { AsteroidBelt } from './AsteroidBelt.js';
+import { DistantBodies, RESOLVE_LO } from './DistantBodies.js';
 import { makeStar, makeSystem, orbitalPosition, AU } from '../universe/Catalog.js';
 import { settings } from '../core/Settings.js';
 import { clamp, damp } from '../core/Noise.js';
@@ -66,6 +67,7 @@ export class SystemRealm extends Realm {
     this.timeScale = 60 * 60 * 10; // ~10 hours of orbit per real second
     this.planets = [];
     this.belts = [];
+    this.distant = null;
     this.followTarget = null;
     this.followOffset = null;
     this._tmp = new THREE.Vector3();
@@ -208,8 +210,13 @@ export class SystemRealm extends Realm {
         holder,
         truePos: new THREE.Vector3(),
         renderDist: 0,
+        angular: 0,
       });
     }
+
+    // The point-spread pass for everything the meshes are too small to carry.
+    this.distant = new DistantBodies(this.planets.length);
+    this.scene.add(this.distant.object3d);
 
     // Belts do their own floating-origin and compression in the vertex shader,
     // so they are added to the scene root rather than to a holder.
@@ -236,52 +243,177 @@ export class SystemRealm extends Realm {
     this.simTime = 0;
   }
 
+  /**
+   * Orbit furniture, drawn as screen-space ribbons rather than hardware lines.
+   *
+   * `THREE.Line` rasterises a one-pixel line with no coverage information, so
+   * every orbit that runs near-horizontal across the frame stair-steps visibly,
+   * and `lineWidth` above 1 does nothing on virtually every WebGL driver. A
+   * two-triangle-wide strip, offset perpendicular to the segment *in screen
+   * space*, gives a line of controllable pixel width whose alpha can fall off
+   * across that width — which is the antialiasing.
+   */
   _buildOrbitLines() {
-    // Drawn in compressed space, rebuilt every frame in `_updateOrbitLines`
-    // because compression depends on where the camera is.
+    // Rebuilt every frame in `_updateOrbitLines` because compression depends on
+    // where the camera is.
     const segs = 192;
     this.orbitLines = [];
     for (const p of this.planets) {
-      const pos = new Float32Array((segs + 1) * 3);
+      const n = segs + 1;
+      // Two vertices per sample, one either side of the centreline.
+      const pos = new Float32Array(n * 2 * 3);
+      const nxt = new Float32Array(n * 2 * 3);
+      const side = new Float32Array(n * 2);
+      for (let i = 0; i < n; i++) {
+        side[i * 2] = -1;
+        side[i * 2 + 1] = 1;
+      }
+      const idx = new Uint32Array(segs * 6);
+      for (let i = 0; i < segs; i++) {
+        const a = i * 2;
+        idx[i * 6] = a; idx[i * 6 + 1] = a + 1; idx[i * 6 + 2] = a + 2;
+        idx[i * 6 + 3] = a + 1; idx[i * 6 + 4] = a + 3; idx[i * 6 + 5] = a + 2;
+      }
+
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('aNext', new THREE.BufferAttribute(nxt, 3));
+      geo.setAttribute('aSide', new THREE.BufferAttribute(side, 1));
+      geo.setIndex(new THREE.BufferAttribute(idx, 1));
       geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
-      const mat = new THREE.LineBasicMaterial({
-        color: new THREE.Color(...p.record.palette.atmo).multiplyScalar(0.5),
+
+      const mat = new THREE.ShaderMaterial({
+        uniforms: {
+          uColor: { value: new THREE.Color(...p.record.palette.atmo).multiplyScalar(0.5) },
+          uOpacity: { value: 0.16 },
+          uWidthPx: { value: 1.6 },
+          uHalfRes: { value: new THREE.Vector2(720, 405) },
+        },
+        vertexShader: /* glsl */ `
+          attribute vec3 aNext;
+          attribute float aSide;
+          uniform float uWidthPx;
+          uniform vec2 uHalfRes;
+          varying float vSide;
+          void main(){
+            vSide = aSide;
+            vec4 cA = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            vec4 cB = projectionMatrix * modelViewMatrix * vec4(aNext, 1.0);
+
+            // Drop any segment with an endpoint at or behind the eye. The
+            // offset below is divided back through w, so a w near zero turns a
+            // 1.6px ribbon into a wedge across the whole frame — which is
+            // exactly what happens on a close approach, where the orbit
+            // ellipse passes the camera. A hardware line clipped at the near
+            // plane is still one pixel wide; a screen-space ribbon is not, and
+            // has to be culled instead.
+            if (cA.w <= 1e-4 || cB.w <= 1e-4){
+              gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+              return;
+            }
+
+            // Segment direction measured in pixels, so the width below is in
+            // pixels too and does not change with distance or aspect.
+            vec2 sA = (cA.xy / cA.w) * uHalfRes;
+            vec2 sB = (cB.xy / cB.w) * uHalfRes;
+            vec2 d = sB - sA;
+            float len = length(d);
+            d = len > 1e-6 ? d / len : vec2(1.0, 0.0);
+            vec2 nrm = vec2(-d.y, d.x);
+            vec2 offNdc = (nrm * uWidthPx * 0.5 * aSide) / uHalfRes;
+            gl_Position = vec4(cA.xy + offNdc * cA.w, cA.zw);
+          }`,
+        fragmentShader: /* glsl */ `
+          precision highp float;
+          uniform vec3 uColor;
+          uniform float uOpacity;
+          varying float vSide;
+          void main(){
+            // Coverage across the ribbon's width. This is the whole point of
+            // the strip: a hardware line has no such value, so its edges can
+            // only ever be hard.
+            float a = 1.0 - vSide * vSide;
+            gl_FragColor = vec4(uColor, a * a * uOpacity);
+          }`,
         transparent: true,
-        opacity: 0.16,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
+        side: THREE.DoubleSide,
       });
-      const line = new THREE.Line(geo, mat);
+
+      const line = new THREE.Mesh(geo, mat);
       line.frustumCulled = false;
       line.renderOrder = -1;
       this.scene.add(line);
-      this.orbitLines.push({ line, geo, mat, segs, planet: p });
+
+      // The orbit plane's normal is fixed, so take it once. Used below to tell
+      // a legible ellipse from one collapsed edge-on.
+      const a0 = { x: 0, y: 0, z: 0 }, a1 = { x: 0, y: 0, z: 0 }, a2 = { x: 0, y: 0, z: 0 };
+      orbitalPosition(p.record, 0, a0);
+      orbitalPosition(p.record, p.record.period / 3, a1);
+      orbitalPosition(p.record, (2 * p.record.period) / 3, a2);
+      const v1 = new THREE.Vector3(a1.x - a0.x, a1.y - a0.y, a1.z - a0.z);
+      const v2 = new THREE.Vector3(a2.x - a0.x, a2.y - a0.y, a2.z - a0.z);
+      const normal = new THREE.Vector3().crossVectors(v1, v2).normalize();
+
+      this.orbitLines.push({ line, geo, mat, segs, planet: p, normal });
     }
   }
 
-  _updateOrbitLines() {
+  _updateOrbitLines(halfFovV) {
+    const distToCentre = Math.max(this.viewPos.length(), 1);
+    const W = Math.max(this.ctx.engine?.width || 1440, 1);
+    const H = Math.max(this.ctx.engine?.height || 810, 1);
+
     for (const o of this.orbitLines) {
       const rec = o.planet.record;
-      const arr = o.geo.attributes.position.array;
+      const pos = o.geo.attributes.position.array;
+      const nxt = o.geo.attributes.aNext.array;
       const period = rec.period;
-      for (let i = 0; i <= o.segs; i++) {
+      const n = o.segs + 1;
+
+      // Sample the ellipse once, then write each point into both of its
+      // vertices and into the previous sample's `aNext`.
+      for (let i = 0; i < n; i++) {
         const t = (i / o.segs) * period;
         orbitalPosition(rec, t, this._orbit);
         const v = this._tmp.set(this._orbit.x, this._orbit.y, this._orbit.z).sub(this.viewPos);
         const d = v.length();
         const s = d > 1 ? compress(d) / d : 0;
-        arr[i * 3] = v.x * s;
-        arr[i * 3 + 1] = v.y * s;
-        arr[i * 3 + 2] = v.z * s;
+        const x = v.x * s, y = v.y * s, z = v.z * s;
+        const a = i * 6;
+        pos[a] = x; pos[a + 1] = y; pos[a + 2] = z;
+        pos[a + 3] = x; pos[a + 4] = y; pos[a + 5] = z;
+        if (i > 0) {
+          const b = (i - 1) * 6;
+          nxt[b] = x; nxt[b + 1] = y; nxt[b + 2] = z;
+          nxt[b + 3] = x; nxt[b + 4] = y; nxt[b + 5] = z;
+        }
       }
+      // The loop closes, so the last sample's neighbour is the first.
+      const last = (n - 1) * 6;
+      for (let k = 0; k < 6; k++) nxt[last + k] = pos[k % 3];
       o.geo.attributes.position.needsUpdate = true;
+      o.geo.attributes.aNext.needsUpdate = true;
+
+      o.mat.uniforms.uHalfRes.value.set(W / 2, H / 2);
+
       // Orbit lines are navigational furniture: useful when you are far enough
       // to be choosing a destination, clutter once you have arrived.
       const near = o.planet.renderDist;
-      o.mat.opacity = 0.20 * clamp((near - 40) / 400, 0, 1);
-      o.line.visible = o.mat.opacity > 0.005;
+      let opacity = 0.20 * clamp((near - 40) / 400, 0, 1);
+
+      // And useful only while you can still see the shape. An orbit whose
+      // angular radius exceeds the field of view no longer reads as an ellipse
+      // — it is a line crossing the frame, carrying no information about where
+      // anything is. Six of those stacked near-parallel across the top of the
+      // frame is what made this furniture dominate rather than inform, so they
+      // fade out once they stop fitting.
+      const angR = Math.atan(rec.orbitRadius / distToCentre);
+      opacity *= 1 - clamp((angR / (halfFovV * 1.25) - 1) / 0.8, 0, 1);
+
+      o.mat.uniforms.uOpacity.value = opacity;
+      o.line.visible = opacity > 0.005;
     }
   }
 
@@ -419,6 +551,12 @@ export class SystemRealm extends Realm {
     // has to carry the body's physical radius as well as the compression
     // factor. Radius x (compressed/true) is exactly the scale at which
     // apparent angular size equals radius/trueDistance — i.e. the real thing.
+    // Radians of vertical field per pixel — the conversion that turns an
+    // angular size into "how big will this actually be on screen", which is the
+    // only sensible basis for deciding whether to draw geometry at all.
+    const halfFovV = ((camera.fov * Math.PI) / 180) / 2;
+    const radPerPx = ((camera.fov * Math.PI) / 180) / Math.max(this.ctx.engine?.height || 900, 1);
+
     const sv = this._tmp.set(0, 0, 0).sub(this.viewPos);
     const sd = Math.max(sv.length(), 1);
     const sComp = compress(sd) / sd;
@@ -437,12 +575,22 @@ export class SystemRealm extends Realm {
       p.holder.scale.setScalar(p.record.radius * comp);
       p.body.update(dt, time);
 
-      // Cull below about a pixel of angular size. Because compression preserves
-      // angular size exactly, this is just radius / true distance — the same
-      // number an observer would measure.
+      // Because compression preserves angular size exactly, this is just
+      // radius / true distance — the same number an observer would measure.
       p.angular = p.record.radius / d;
-      p.holder.visible = p.angular > 1.5e-4;
+
+      // Hand a body over to the sprite pass as soon as its mesh stops being
+      // worth rasterising. The old threshold of 1.5e-4 rad is about a fifth of
+      // a pixel at this field of view, which kept sub-pixel spheres in the draw
+      // list where they contributed nothing but still cost a terrain shader —
+      // and, worse, made "visible" mean something that could not be seen.
+      p.holder.visible = (2 * p.angular) / radPerPx > RESOLVE_LO - 0.5;
     }
+
+    // Everything below the resolution limit is drawn as its point spread
+    // instead. Without this the system view has a star, orbit furniture, and
+    // nothing else — ten worlds in frame and not one of them visible.
+    this.distant?.update(this.planets, radPerPx, this.star.lightColor);
 
     this.scene.updateMatrixWorld(true);
 
@@ -473,7 +621,7 @@ export class SystemRealm extends Realm {
       belt.update(this.simTime, this.viewPos, this._light);
     }
 
-    this._updateOrbitLines();
+    this._updateOrbitLines(halfFovV);
 
     // Sky stars ride with the camera — no parallax is meaningful at parsecs.
     this.skyStars.position.set(0, 0, 0);
@@ -496,6 +644,11 @@ export class SystemRealm extends Realm {
       this.scene.remove(p.holder);
     }
     this.planets.length = 0;
+    if (this.distant) {
+      this.distant.dispose();
+      this.scene.remove(this.distant.object3d);
+      this.distant = null;
+    }
     for (const b of this.belts || []) {
       b.dispose();
       this.scene.remove(b.object3d);

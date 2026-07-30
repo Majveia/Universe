@@ -130,6 +130,38 @@ Defects found in earlier rounds, kept here so they are not rediscovered:
   reflectance carries a `mu0/(mu + mu0)` factor, and Saturn all but disappears at
   equinox. If a ring shot looks empty, check the star's elevation above the ring
   plane before touching the shader.
+
+- Express cull thresholds in projected pixels, never in radians or world units.
+  A threshold of `1.5e-4` radians sounds conservative and is a fifth of a pixel
+  at a 70-degree field of view, so bodies passed the test, entered the draw list,
+  cost a full shader, and could not be seen. If "visible" does not mean "can be
+  seen", the flag is lying. Anything below roughly two pixels needs a different
+  representation, not a smaller triangle.
+
+- A power curve cannot compress a range spanning many orders of magnitude while
+  keeping the ordering readable. One system spans about nine orders in irradiance
+  and no exponent gentle enough to lift the faint end off the floor leaves the
+  bright end distinguishable — most of the population clamps to one value. Use a
+  logarithm: apparent magnitude, `-2.5 * log10(E / E_ref)`, exists for precisely
+  this and holds nine orders in a span of about 23.
+
+- When one colour carries both hue and brightness, separate them. Multiplying a
+  computed brightness by a dark base colour dims a dark object twice over — once
+  for the physical reason already in the brightness term, once again for its
+  albedo. Normalise the tint to unit luminance and let the magnitude carry level.
+
+- Screen-space ribbon lines must cull segments with an endpoint at or behind the
+  near plane. The perpendicular offset is divided back through `w`, so a `w` near
+  zero turns a 1.6px ribbon into a wedge across the entire frame. This does not
+  show up in wide shots and appears the moment the camera approaches anything the
+  line passes near. A hardware line clipped at the near plane stays one pixel
+  wide, which is why swapping `THREE.Line` for a strip needs this guard added at
+  the same time.
+
+- Navigational furniture should fade when it stops carrying information. An orbit
+  whose angular radius exceeds the field of view is no longer an ellipse, just a
+  line across the screen; several of those stack into a bundle that dominates the
+  frame while telling the viewer nothing.
 - Additive blending integrates the full depth of a volume, which averages
   independent structures together and cancels them. Depth extinction is what
   restores a legible slab.
