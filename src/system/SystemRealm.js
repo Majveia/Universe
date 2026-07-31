@@ -39,6 +39,7 @@ import { makeStar, makeSystem, orbitalPosition, AU } from '../universe/Catalog.j
 import { settings } from '../core/Settings.js';
 import { clamp, damp } from '../core/Noise.js';
 import { Rng } from '../core/Rng.js';
+import { GLSL_LIB } from '../shaders/common.js';
 
 /** Compression constants, in metres. B sets where compression starts to bite. */
 const COMP_A = 900;
@@ -230,6 +231,68 @@ export class SystemRealm extends Realm {
     this.skyStars.frustumCulled = false;
     this.skyStars.renderOrder = -10;
     this.scene.add(this.skyStars);
+
+    this._buildGalacticGlow(gN);
+  }
+
+  /**
+   * The unresolved half of the Milky Way.
+   *
+   * Concentrating the point field toward a plane produces a band, but a band
+   * made of countable dots — and what the eye actually reads as the Milky Way is
+   * not resolvable stars at all. It is the summed light of the ones too faint
+   * and too numerous to separate, which no finite sprite count reproduces: you
+   * can always see the individual dots because there are only tens of thousands
+   * of them and the real thing has hundreds of billions.
+   *
+   * So the diffuse component is drawn as what it is — a continuous glow, on a
+   * sky-sized shell, brightest along the plane and cut by the same rift the
+   * point field is cut by. The stars then ride on top of it rather than having
+   * to be it.
+   */
+  _buildGalacticGlow(gN) {
+    const geo = new THREE.SphereGeometry(1.55e4, 48, 32);
+    this.glowMat = new THREE.ShaderMaterial({
+      uniforms: { uNormal: { value: gN.clone() } },
+      vertexShader: /* glsl */ `
+        varying vec3 vDir;
+        void main(){
+          vDir = normalize(position);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: /* glsl */ `
+        precision highp float;
+        ${GLSL_LIB}
+        uniform vec3 uNormal;
+        varying vec3 vDir;
+        void main(){
+          vec3 d = normalize(vDir);
+          float h = abs(dot(d, uNormal));
+          // sech-like falloff away from the plane, matching the star field's
+          // vertical profile so the two layers agree on where the band is.
+          float band = exp(-pow(h / 0.16, 1.7));
+          // Brighter toward the galactic centre than the anticentre: half the
+          // sky's worth of disc lies one way and very little the other, which is
+          // why the real band is markedly lopsided.
+          float lon = atan(d.z, d.x);
+          band *= 0.55 + 0.45 * pow(max(cos(lon), 0.0), 1.4);
+          // The same rift and patchy foreground extinction the point field uses.
+          float rift = 1.0 - 0.62 * exp(-pow(h / 0.045, 2.0)) * (0.5 + 0.5 * sin(lon * 3.1 + 1.7));
+          float mott = 0.72 + 0.28 * (fbm(d * 9.0, 4) * 0.5 + 0.5);
+          float a = band * rift * mott;
+          vec3 col = mix(vec3(0.42, 0.48, 0.72), vec3(0.92, 0.86, 0.74), 0.45);
+          gl_FragColor = vec4(col * a * 0.22, 1.0);
+        }`,
+      side: THREE.BackSide,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      depthTest: true,
+    });
+    this.galacticGlow = new THREE.Mesh(geo, this.glowMat);
+    this.galacticGlow.frustumCulled = false;
+    this.galacticGlow.renderOrder = -11;
+    this.scene.add(this.galacticGlow);
   }
 
   enter(params = {}) {
@@ -498,7 +561,30 @@ export class SystemRealm extends Realm {
     const side = new THREE.Vector3().copy(outward).cross(new THREE.Vector3(0, 1, 0)).normalize();
     this.followTarget = p;
 
-    if (framing === 'crescent') {
+    if (framing === 'rings') {
+      // High three-quarter from the SUNLIT side.
+      //
+      // Elevation is what this framing is for: from near the ring plane the
+      // sheet is edge-on and the shadow lying on it has nowhere to show. Climbing
+      // opens the disc out so the umbra reads as a band across it.
+      //
+      // Crossing to the anti-sunward side was tried and is wrong, however
+      // reasonable it sounds — the shadow does fall on the far side, but going
+      // there puts the camera on the *unlit* face, where transport correctly
+      // inverts: the optically thick B ring goes black in transmission and only
+      // the gaps glow. The sheet disappears and what is left is exactly the
+      // "concentric wires" the rubric fails a ring frame for. Stay sunward, where
+      // the sheet is a sheet, and gain the shadow through height instead.
+      this.followOffset = new THREE.Vector3()
+      // Height is a trade, not a free win. Climbing raises muV, which divides
+      // the slant optical depth and thins the sheet — push it far enough and the
+      // dense annuli stop occluding and the disc separates into the concentric
+      // arcs the rubric fails a ring frame for. This sits at the point where the
+      // shadow is legible and the sheet still reads as a sheet.
+        .copy(outward).multiplyScalar(-r * 1.3)
+        .addScaledVector(side, r * 2.6)
+        .add(this._tmp2.set(0, r * 1.75, 0));
+    } else if (framing === 'crescent') {
       // Mostly anti-sunward, so the star is behind the planet and only a thin
       // rind of the disc is lit. The sideways term is what stops it being a
       // pure eclipse: at dead-on anti-sunward the crescent closes to nothing.
@@ -683,6 +769,7 @@ export class SystemRealm extends Realm {
 
     // Sky stars ride with the camera — no parallax is meaningful at parsecs.
     this.skyStars.position.set(0, 0, 0);
+    if (this.galacticGlow) this.galacticGlow.position.set(0, 0, 0);
     camera.position.set(0, 0, 0);
   }
 
@@ -729,5 +816,9 @@ export class SystemRealm extends Realm {
     this._teardownSystem();
     this.skyStars.geometry.dispose();
     this.skyMat.dispose();
+    if (this.galacticGlow) {
+      this.galacticGlow.geometry.dispose();
+      this.glowMat.dispose();
+    }
   }
 }

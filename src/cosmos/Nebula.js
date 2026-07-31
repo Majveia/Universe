@@ -263,7 +263,7 @@ vec3 shadowTrans(vec3 pw, vec3 L, float maxD, float dither){
 
 /**
  * Radiance emitted toward the camera from one sample of the medium.
- * `dens` is the local density, `rd` the view direction.
+ * dens is the local density, rd the view direction.
  */
 vec3 mediumRadiance(vec3 pw, vec3 rd, float dens, float dither, float shell){
   vec3 scattered = vec3(0.0);

@@ -352,10 +352,24 @@ vec3 giantColor(vec3 p, out float turbOut){
   float bands = fbm(vec3(0.0, y * uBandFreq, 0.0) + uSeed * 0.4, 4) * 0.5 + 0.5;
   bands = smoothstep(0.18, 0.82, bands);
 
+  // Zones and belts have to differ in HUE, not only in value. The bright zones
+  // are high ammonia cloud — pale and faintly cool — while the belts are deeper,
+  // warmer levels where the chromophores sit. Jupiter's cream-versus-rust is a
+  // hue difference, and reproducing it as one brown at two brightnesses is what
+  // makes a gas giant read as monochrome.
+  //
+  // The base-to-accent lerp alone was not delivering it: the belt term pulled
+  // 60% toward a darkened base while the zone term pulled only 50% toward the
+  // accent over a window that barely opened (0.72 to 0.98), so the bright end of
+  // the ramp never actually arrived anywhere. The two ends are now weighted
+  // symmetrically and pushed apart in hue as well as in lightness.
   vec3 zone = mix(uBase, uAccent, bands);
-  // Belts: the darker, deeper, warmer lanes between the bright ammonia zones.
-  zone = mix(zone, uBase * 0.55, (1.0 - smoothstep(0.10, 0.55, bands)) * 0.6);
-  zone = mix(zone, uAccent * 1.15, smoothstep(0.72, 0.98, bands) * 0.5);
+  // Belts: darker, warmer, more saturated than the base.
+  vec3 beltCol = uBase * 0.62 + vec3(0.10, 0.028, 0.0);
+  zone = mix(zone, beltCol, (1.0 - smoothstep(0.10, 0.58, bands)) * 0.72);
+  // Zones: paler and a touch cooler than the accent.
+  vec3 zoneCol = mix(uAccent, vec3(1.0, 0.99, 0.96), 0.45);
+  zone = mix(zone, zoneCol, smoothstep(0.55, 0.92, bands) * 0.85);
 
   // Polar hood. Desaturating the same banding was not enough to read as a
   // different regime, and it is not what happens: away from the tropics the
@@ -507,7 +521,11 @@ void main(){
     vec3 highland = mix(uAccent * 0.8, vec3(lum(uAccent)) * 1.05, saturate(elev * 1.4));
     albedo = mix(lowland, highland, saturate(elev * 1.6));
     albedo = mix(albedo, uBase * 0.62 + vec3(0.10, 0.09, 0.08), rock * 0.7);
-    albedo = mix(albedo, vec3(0.90, 0.94, 1.0), cap * uIceCap * 3.0);
+    // cap already encodes both whether there is ice here and how completely it
+    // covers, so it is the whole mix factor. Scaling it by uIceCap was a category
+    // error — that uniform is a *latitude*, not a strength — and the extra 3.0
+    // drove the blend to full white wherever cap merely exceeded a third.
+    albedo = mix(albedo, vec3(0.90, 0.94, 1.0), cap);
     albedo *= 0.86 + 0.28 * (ridge * 0.5 + 0.5);
 
     // Fine albedo texture, on land only. Most of what the eye reads as detail
@@ -888,7 +906,22 @@ export class PlanetBody {
 
     // Ice caps: the fraction of latitude that stays frozen. Cold worlds cap
     // almost to the tropics, hot ones not at all.
-    const capLat = clamp(1.06 - smoothstep(190, 330, r.surfaceTemp) * 1.25, 0.0, 0.98);
+    // Latitude, as |sin(lat)|, above which permanent ice survives. The sense of
+    // this matters and was inverted: it read
+    //
+    //     1.06 - smoothstep(190, 330, T) * 1.25
+    //
+    // which hands a *hot* world a threshold of zero — ice everywhere — and a
+    // frozen one 0.98, meaning none at all. At an Earth-like 288 K it produced
+    // 0.08, so "polar" ice began at eight per cent of the way to the pole and
+    // covered essentially the whole globe. That is what was burying the surface
+    // under white, and it was never the cloud deck.
+    //
+    // Monotonic the right way, and anchored on real numbers: ~250 K puts the ice
+    // line down at 30 degrees the way a glacial Earth does, 288 K puts it near
+    // 70 degrees where ours sits, and past ~300 K the threshold passes 1.0 so no
+    // ice forms at all.
+    const capLat = clamp((r.surfaceTemp - 195) / 100, 0.0, 1.15);
     const seed = new THREE.Vector3(rng.range(-40, 40), rng.range(-40, 40), rng.range(-40, 40));
 
     // Sea level in height-field units. The field is roughly [0,1] centred on

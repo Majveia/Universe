@@ -201,7 +201,37 @@ Defects found in earlier rounds, kept here so they are not rediscovered:
 
 - Backticks inside a `/* glsl */` template literal terminate the shader string
   and produce a JavaScript syntax error somewhere unrelated-looking. Do not
-  quote identifiers in shader comments. This has cost three build failures.
+  quote identifiers in shader comments. This has cost four build failures, and
+  `tools/lint-shaders.mjs` now parse-checks every file before a round captures.
+
+- A green build does not mean the tree is sound. The bundler only parses what is
+  reachable from the entry point, so a syntax error in an unreferenced file never
+  surfaces — `Nebula.js` carried one for four rounds. Walk the import graph
+  occasionally: 27 of 45 files here turned out never to run at all.
+
+- Check the sense of a derived parameter, not just its range. An ice-cap latitude
+  computed as `1.06 - smoothstep(190, 330, T) * 1.25` stays inside its clamp for
+  every input and is monotonic the wrong way — hot worlds got global ice, frozen
+  ones got none. Anchor such a formula on two known cases (Earth at 288 K, a
+  snowball at 250 K) and check both, because a plausible-looking expression with
+  an inverted slope produces plausible-looking numbers.
+
+- A uniform is one quantity. Using a latitude threshold as an opacity multiplier
+  — `cap * uIceCap * 3.0` — type-checks, runs, and is meaningless. If a name says
+  where, it cannot also mean how much.
+
+- Exposure is not contrast, and a metric is not a criterion. Raising overall
+  intensity lifts the per-tracer floor along with the structure, so a frame with
+  a low peak gets brighter without getting better and eventually loses the empty
+  space the rubric actually asks for. Before optimising a number, check the
+  rubric asks for that number: "peak luminance is low" is expected when the
+  camera is inside a translucent medium.
+
+- When a camera move fixes one rubric line, check it has not broken another.
+  Crossing to the anti-sunward side of a ring system reveals the shadow and
+  simultaneously puts the camera on the unlit face, where the dense annuli
+  correctly go black and the sheet collapses into the concentric wires the same
+  rubric fails the shot for.
 - Additive blending integrates the full depth of a volume, which averages
   independent structures together and cancels them. Depth extinction is what
   restores a legible slab.

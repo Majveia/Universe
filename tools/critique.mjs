@@ -124,7 +124,9 @@ const SHOTS = [
     await new Promise(r => setTimeout(r, 700));
     const r = ctx.director.current;
     const i = r.planets.findIndex(p => p.record.hasRings && p.record.isGiant);
-    r.focus(i >= 0 ? i : 0);
+    // The realm owns this framing: it has to sit anti-sunward and high to put
+    // the planet's shadow on the visible half of the ring plane.
+    r.focus(i >= 0 ? i : 0, 'rings');
   `],
   // G3V with a RINGLESS gas giant, so nothing crosses the bands. Deliberately a
   // different system from the rings shot: reusing one body made the two frames
@@ -165,6 +167,15 @@ for (const [name, secs, script] of selected) {
 // judging. A critic that silently reviews stale output is worse than no critic,
 // so the build is part of the run and a failure stops it.
 if (!args.includes('--no-build')) {
+  // Parse-check first. The bundler only sees files reachable from the entry, so
+  // a syntax error in anything unreferenced builds green and lies to the round;
+  // and when it does fail, a stray backtick in a shader template reports as an
+  // unrelated "Expected a semicolon" somewhere else entirely.
+  const lint = spawnSync('node', ['tools/lint-shaders.mjs'], { stdio: 'inherit' });
+  if (lint.status !== 0) {
+    console.error('\n[critique] source does not parse — refusing to capture.');
+    process.exit(2);
+  }
   console.log('[critique] building...');
   const build = spawnSync('npm', ['run', 'build'], { stdio: 'inherit' });
   if (build.status !== 0) {
