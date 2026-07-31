@@ -92,7 +92,26 @@ const REF = 2.0e-6;
  * thing this pass exists to show — was lost.
  */
 const MAG_BRIGHT = 1.0;
-const MAG_FAINT = 24.0;
+const MAG_FAINT = 28.0;
+
+/**
+ * The faint end, decided rather than inherited.
+ *
+ * Left at its first value this clamp did the work for eight of ten bodies, so
+ * the outer system collapsed into one indistinguishable dim value and the view
+ * read as a two-planet system. Strictly that is correct photometry — a world at
+ * 75 AU really is that faint — but it is the wrong answer for a frame whose job
+ * is to show that a system has worlds in it.
+ *
+ * The resolution is the one the realm already applies to illumination: a real
+ * camera exposes for its subject. The subject here is the system, so the floor
+ * sits where the faintest planet still records as a planet. Every world in the
+ * frame registers; the magnitude scale above still orders them, so the inner
+ * giants remain visibly brighter. What is given up is a couple of stops of
+ * contrast at the bright end, which no viewer can miss, in exchange for eight
+ * bodies that were previously indistinguishable from each other.
+ */
+const MAG_FLOOR = 0.22;
 
 /** Peak emitted level for the brightest body, matched to the sky field's range. */
 const AMP = 4.5;
@@ -172,7 +191,7 @@ export class DistantBodies {
       // Apparent magnitude: each step of 1 is a factor of 2.512 in irradiance,
       // which is how a nine-order range fits in a span of about 23.
       const mag = -2.5 * Math.log10(Math.max(raw / REF, 1e-30));
-      const b = clamp(1 - (mag - MAG_BRIGHT) / (MAG_FAINT - MAG_BRIGHT), 0.14, 1);
+      const b = clamp(1 - (mag - MAG_BRIGHT) / (MAG_FAINT - MAG_BRIGHT), MAG_FLOOR, 1);
 
       // Reflected light is the star's, coloured by what the surface returns.
       const base = rec.palette.base;

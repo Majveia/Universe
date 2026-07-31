@@ -104,14 +104,23 @@ const SHOTS = [
     // The realm owns the framing so position and aim stay derived together.
     r.focus(best >= 0 ? best : 0, 'crescent');
   `],
-  // G5V with a ringed gas giant whose axis is tilted ~54 degrees, putting the
-  // star about 47 degrees above the ring plane. That elevation is the whole
-  // shot: single-scattering reflectance carries a mu0/(mu+mu0) factor, so a ring
-  // lit edge-on is *correctly* almost black — Saturn at equinox all but
-  // disappears. Seeds were swept live for the largest sun elevation rather than
-  // for the largest axial tilt, because orbital phase decides the rest.
+  // A ringed gas giant with the star 19 degrees above the ring plane, chosen by
+  // sweeping the catalogue live against both halves of a real tension.
+  //
+  // Reflectance carries a mu0/(mu+mu0) factor, so a ring lit edge-on is
+  // *correctly* almost black — Saturn at equinox all but disappears, which
+  // argues for high elevation. But the umbra falls on the ring plane only out to
+  // 1/sin(elevation) planet radii, and at the 47 degrees this shot used in
+  // round 7 that is 1.37 against an inner ring edge at 1.35: the shadow grazed
+  // the inner rim and nothing else, which is why no umbra ever appeared. Low
+  // elevation gives the shadow and loses the light.
+  //
+  // The way out is not to compromise on elevation but to pick a subject bright
+  // enough to afford a low one. Here the shadow reaches 3.1 radii — past the
+  // outer edge at 2.18, so it crosses the whole sheet — while the giant sits
+  // close enough in that illumination is still at the top of its range.
   ['rings', 9, `
-    await ctx.director.goTo('system', { seed: 479 }, 'fade', 0.05);
+    await ctx.director.goTo('system', { seed: 507 }, 'fade', 0.05);
     await new Promise(r => setTimeout(r, 700));
     const r = ctx.director.current;
     const i = r.planets.findIndex(p => p.record.hasRings && p.record.isGiant);
@@ -131,6 +140,11 @@ const SHOTS = [
       // Close in until the body fills the frame; band structure only reads
       // when the planet is large enough to resolve it.
       r.followOffset.multiplyScalar(0.55);
+      // Lift the camera off the equator. The rubric's reference is Juno, whose
+      // whole point is that the poles do not look like the tropics — and from
+      // a dead-equatorial vantage the polar hood is edge-on and cannot be
+      // judged at all.
+      r.followOffset.y += r.planets[i].record.radius * 0.9;
       r.aimAtFollowTarget();
     }
   `],

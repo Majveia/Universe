@@ -67,19 +67,29 @@ varying vec3 vLocal;
 // this one number, which is what makes the lit/unlit inversion fall out
 // automatically instead of needing two separate looks.
 float opticalDepth(float t){
-  // Broad envelope: dense in the middle annuli, thinning at both edges the way
-  // an accretion-limited disc does.
-  float env = smoothstep(0.0, 0.10, t) * (1.0 - smoothstep(0.82, 1.0, t));
+  // Radial profile, after Saturn's. The previous envelope was flat across the
+  // whole sheet — it only rolled off at the very edges — so optical depth
+  // barely varied with radius and the rings read as one grey annulus with noise
+  // on it. Real rings are strongly ordered: the C ring is nearly transparent,
+  // the B ring is optically thick and carries almost all the brightness, and
+  // the A ring beyond the Cassini Division sits between the two. That ordering
+  // is most of what identifies a ring system, and it is a radial *profile*, not
+  // a texture.
+  float cRing = 0.16 * smoothstep(0.00, 0.06, t) * (1.0 - smoothstep(0.20, 0.31, t));
+  float bRing = 1.00 * smoothstep(0.24, 0.35, t) * (1.0 - smoothstep(0.60, 0.68, t));
+  float aRing = 0.44 * smoothstep(0.70, 0.77, t) * (1.0 - smoothstep(0.93, 1.00, t));
+  float env = cRing + bRing + aRing;
 
   // Banding across three scales. Real rings have structure from tens of
   // kilometres up to thousands, and hitting several octaves is what stops
-  // them reading as a gradient.
-  float b = 0.55
-    + 0.30 * snoise(vec3(t * 42.0, uSeed, 0.0))
-    + 0.18 * snoise(vec3(t * 138.0, uSeed * 1.7, 0.0))
-    + 0.10 * snoise(vec3(t * 390.0, uSeed * 2.3, 0.0));
+  // them reading as a gradient. Centred on 1.0 so it modulates the profile
+  // above rather than replacing it.
+  float b = 1.0
+    + 0.34 * snoise(vec3(t * 42.0, uSeed, 0.0))
+    + 0.20 * snoise(vec3(t * 138.0, uSeed * 1.7, 0.0))
+    + 0.11 * snoise(vec3(t * 390.0, uSeed * 2.3, 0.0));
 
-  float tau = env * max(b, 0.0) * 3.4;
+  float tau = env * max(b, 0.0) * 2.6;
 
   // Resonance gaps, cut with a hard rim. A density wave piles material up on
   // the outside of each gap, so the edge is bright immediately before it

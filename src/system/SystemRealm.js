@@ -97,14 +97,72 @@ export class SystemRealm extends Realm {
     const col = new Float32Array(n * 3);
     const siz = new Float32Array(n);
     const c = new THREE.Color();
+    // The sky is not isotropic and a uniform scatter is the one thing that
+    // guarantees it reads as wallpaper. We sit inside a disc galaxy, so looking
+    // along the plane stacks thousands of light-years of stars into a band and
+    // looking out of it hits the halo almost immediately. Two thirds of the
+    // field is therefore drawn concentrated toward a galactic plane, with a
+    // sech-squared profile in galactic latitude — the same vertical profile the
+    // Catalog uses for stellar density — while the rest stays isotropic to give
+    // the foreground halo population.
+    //
+    // A tilted plane, not the ecliptic: the two are unrelated in reality, and
+    // aligning them would make the band sit exactly along the orbit furniture.
+    const gN = new THREE.Vector3(0.31, 0.87, -0.38).normalize();
+    const gU = new THREE.Vector3();
+    const gV = new THREE.Vector3();
+    if (Math.abs(gN.y) < 0.9) gU.set(0, 1, 0).cross(gN).normalize();
+    else gU.set(1, 0, 0).cross(gN).normalize();
+    gV.copy(gN).cross(gU).normalize();
+    const tmp = new THREE.Vector3();
+
     for (let i = 0; i < n; i++) {
-      const d = rng.onSphere();
+      let d;
+      const inDisc = rng.next() < 0.55;
+      if (inDisc) {
+        // sech^2 in height above the plane, sampled by inverting tanh. The
+        // scale height wants to be generous: too tight and the band stops being
+        // a diffuse glow and becomes a stripe of confetti with a hard edge,
+        // which is a different artefact from the uniform scatter it replaced but
+        // no more convincing.
+        const scaleH = 0.14;
+        const u = rng.range(-0.999, 0.999);
+        const h = scaleH * Math.atanh(u);
+        const phi = rng.range(0, Math.PI * 2);
+        d = tmp.copy(gU).multiplyScalar(Math.cos(phi))
+          .addScaledVector(gV, Math.sin(phi))
+          .addScaledVector(gN, h)
+          .normalize()
+          .clone();
+      } else {
+        d = rng.onSphere();
+      }
+
       const r = 1.6e4;
       pos[i * 3] = d.x * r;
       pos[i * 3 + 1] = d.y * r;
       pos[i * 3 + 2] = d.z * r;
-      // Magnitude distribution: a very few bright, overwhelmingly faint.
-      const m = Math.pow(rng.next(), 3.1);
+
+      // Dust lanes. The band is not a clean stripe — it is bisected by the Great
+      // Rift and mottled by foreground clouds, and that patchiness is most of
+      // what makes it read as a real galaxy rather than an airbrushed streak.
+      // Extinguished stars keep their position and are drawn at zero size; the
+      // slot cannot simply be skipped or it would leave a star sitting at the
+      // origin, which is where the camera is.
+      if (inDisc) {
+        const lane = Math.sin(Math.atan2(d.z, d.x) * 3.1 + 1.7) * 0.5 + 0.5;
+        const near = 1 - Math.min(1, Math.abs(gN.dot(d)) / 0.06);
+        if (near > 0 && rng.next() < near * lane * 0.72) {
+          siz[i] = 0;
+          continue;
+        }
+      }
+      // Magnitude distribution: a very few bright, overwhelmingly faint. Stars
+      // in the band are pushed fainter still — what the eye reads as the Milky
+      // Way is not a line of resolvable stars but the unresolved light of very
+      // many of them, so the band has to be built from a dense population of
+      // sub-pixel dots that sum rather than from brighter individual points.
+      const m = Math.pow(rng.next(), inDisc ? 5.0 : 3.1);
       siz[i] = 0.6 + m * 5.2;
       const t = 2600 + Math.pow(rng.next(), 2.4) * 24000;
       const k = t / 100;

@@ -162,6 +162,46 @@ Defects found in earlier rounds, kept here so they are not rediscovered:
   whose angular radius exceeds the field of view is no longer an ellipse, just a
   line across the screen; several of those stack into a bundle that dominates the
   frame while telling the viewer nothing.
+
+- Worley `F2 - F1` draws cell *boundaries* and gives hard polygons — cracked mud,
+  crazed glaze, a Voronoi diagram. For round blobs (cyclones, craters, colonies,
+  anything organic) use a falloff on the F1 *distance* instead. Reaching for the
+  edge function by habit is the single fastest way to make a natural surface look
+  manufactured.
+
+- A feature can be geometrically correct and still never reach the eye.
+  Foreshortening crushes everything above about 55 degrees of latitude into the
+  last few pixels of the rim, so a polar effect defined to start there is
+  invisible from any equatorial vantage. Check where a feature lands *on screen*,
+  not where it lands on the sphere — and if the shot cannot see the thing the
+  rubric asks about, move the camera.
+
+- Detail gated behind a type-specific parameter is absent on every other type.
+  The third scale of terrain relief sat behind a dune strength that is zero on
+  anything but a desert, so temperate worlds had continental and orogenic
+  structure and then nothing at all. If the rubric asks for three scales, one of
+  them cannot be optional.
+
+- Finite-difference normals impose a frequency ceiling. With epsilon `e`, detail
+  above roughly `1/(4e)` aliases into sparkle instead of resolving into surface.
+  Put the highest-frequency variation in albedo, which is never differentiated
+  and therefore costs nothing to sample finely.
+
+- A clamp is not a decision. When a floor ends up doing the work for most of the
+  population, the range mapping has already failed and the clamp is hiding it —
+  and whatever it clamps to is a value nobody chose. Either fix the mapping or
+  make the floor an explicit, stated choice with a reason.
+
+- Before changing a shader to make something visible, check whether the subject
+  can show it at all. A ring umbra reaches `1/sin(sun elevation)` planet radii;
+  against an inner ring edge at 1.35 radii, any elevation above about 48 degrees
+  puts the shadow entirely inside the hole. Two rubric criteria pulling opposite
+  ways — bright rings want high elevation, a visible shadow wants low — is a sign
+  to change the subject, not to compromise the angle.
+
+- Backticks inside a `/* glsl */` template literal terminate the shader string
+  and produce a JavaScript syntax error somewhere unrelated-looking. Do not
+  quote identifiers in shader comments. This has cost three build failures.
 - Additive blending integrates the full depth of a volume, which averages
   independent structures together and cancels them. Depth extinction is what
   restores a legible slab.
