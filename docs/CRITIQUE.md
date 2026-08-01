@@ -268,3 +268,48 @@ Defects found in earlier rounds, kept here so they are not rediscovered:
   renders outer worlds pure black. Compress it the way a camera exposes.
 - Unit-radius geometry needs the body's physical radius in its holder scale;
   forgetting it renders everything at ~1e-7 of its size.
+
+- A CPU mirror of a GPU field must be the *same* function, not a similar one.
+  Two implementations of "simplex noise" agree on every statistic and disagree
+  about where every peak is, so a mirror is fine for sweeping an amplitude and
+  useless for saying "there is a node here" and having the GPU draw one there.
+  `probe-web.mjs` says it is not bit-identical and was right to; anything doing
+  geometry rather than statistics needs `ZeldovichField.js` and the
+  `verify-field.mjs` gate.
+
+- A float literal can round in opposite directions in float32 and float64, and
+  when a `floor` follows it that is a logic difference, not a precision one. The
+  GLSL simplex writes `1/7` as `0.142857142857`, which is below one seventh in
+  double and above it in float — so `floor(35 * n_)` is 4 on the CPU and 5 on the
+  GPU, every gradient after it differs, and the noise comes back with a range of
+  ±4 instead of ±1. Port the discrete-decision path through `Math.fround`. This
+  class of bug is invisible in code review and obvious in one comparison, which
+  is the argument for having the comparison.
+
+- `THREE.AdditiveBlending` is SrcAlpha/One, so it multiplies the emitted colour
+  by alpha. Writing `vec4(col * level, level)` therefore emits level SQUARED: a
+  factor of eight in a uniform becomes a factor of sixty in the frame, and a
+  layer goes from invisible to blown out with no usable setting between. It also
+  squares whatever shape is in the alpha, so a carefully chosen profile silently
+  becomes its own square. Use premultiplied colour with One/One blending when
+  coverage and radiance need to stay independent.
+
+- Kernel width under conserved flux is close to a no-op. Flux conservation is
+  exactly the statement that spreading a fixed amount of light over more pixels
+  leaves the integrated image unchanged, so tuning a splat's size while
+  normalising by that size cannot change how a medium reads — measured at 26px
+  and 64px, the frames matched to within a percentile point. If a medium looks
+  wrong, suspect the sampling density or the flux level, not the kernel.
+
+- Prefer a gate relative to the measured range over an absolute epsilon. A
+  per-channel tolerance has to be picked, and then widened whenever it trips,
+  which turns it into a record of what the code does rather than a check on it.
+  Quantities that differ by five orders of magnitude cannot share one epsilon,
+  and four hand-tuned ones are four places to hide a defect. Float32 rounding
+  lands near 1e-5 of range and a logic divergence near 1e0, so a gate at 1e-3
+  needs no tuning and has two orders of margin either side.
+
+- Measure before diagnosing, including when the frame looks obvious. The cluster
+  layer read as bleached white by eye and measured zero pixels above 200/255 —
+  the defect was the sprite's shape, not its exposure, and the two call for
+  opposite fixes. `tools/frame-stats.mjs` exists for this.
