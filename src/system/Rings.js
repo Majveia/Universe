@@ -102,7 +102,15 @@ float opticalDepth(float t){
     // Clear only the very centre of the resonance and feather hard. A gap
     // that is wide relative to its feather turns the disc into concentric
     // wires; Saturn's real gaps are thin lines in a continuous sheet.
-    float clear = smoothstep(w * 0.12, w, d);
+    //
+    // The feather also has to be at least a pixel wide on screen. Where the
+    // sheet is seen at a grazing angle — which is exactly where it passes the
+    // planet's limb — t changes by more across one pixel than the whole gap
+    // width, so a fixed feather is sampled far below its own frequency and the
+    // innermost annuli break into dashes. Widening the edges by the local
+    // derivative is standard analytic antialiasing and costs one builtin.
+    float aa = fwidth(t) * 1.5;
+    float clear = smoothstep(max(w * 0.12, aa * 0.5), max(w, aa), d);
     float wave = exp(-pow((t - g - w * 1.4) / (w * 0.9), 2.0)) * 0.7;
     tau = tau * clear + wave * env;
   }

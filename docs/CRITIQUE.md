@@ -255,9 +255,28 @@ Defects found in earlier rounds, kept here so they are not rediscovered:
   makes it one. Boosting tracer brightness by the Zel'dovich density to make
   cluster cores read brings back per-tracer speckle at every gate setting,
   because that density describes how much one mass element was compressed, not
-  how many neighbours it has on screen. If the goal is "this region should look
-  like a cluster", the count has to happen somewhere neighbours exist — on the
-  CPU — and the cluster drawn as an object.
+  how many neighbours it has on screen.
+
+- When a shader cannot make a distinction, check whether a later stage already
+  has it. "Many splats landed on this pixel" is not available to a vertex or
+  fragment shader that only sees one splat, but it is exactly what the
+  accumulated HDR buffer holds — so a bloom threshold makes the discrimination
+  for free, and a lone loud tracer can never reach it. Realms can and should set
+  their own bloom: a default tuned so only a star blooms will never touch a web
+  filament.
+
+- Two documented failure modes can pull against each other, and then the setting
+  between them is a stated trade rather than a bug to fix. The cosmic-web splat
+  cap is the case: widen it and the close view goes hazy, narrow it and the
+  medium comes apart into confetti. Both have been tried and recorded. Check the
+  source comments before "fixing" a value that looks obviously wrong — it may be
+  the surviving side of an argument someone already had.
+
+- Screen-space derivatives are the fix for thin features seen at grazing angles.
+  A ring gap several thousandths of a unit wide is sampled far below its own
+  frequency where the sheet nears edge-on, and breaks into dashes. Widening the
+  feather by `fwidth` of the parameter costs one builtin and removes the whole
+  class of artefact.
 - Additive blending integrates the full depth of a volume, which averages
   independent structures together and cancels them. Depth extinction is what
   restores a legible slab.

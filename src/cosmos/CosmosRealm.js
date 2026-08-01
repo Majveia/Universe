@@ -117,6 +117,49 @@ export class CosmosRealm extends Realm {
     const cam = this.ctx.camera;
     cam.position.set(0, 6, 26);
     cam.lookAt(0, 0, 0);
+
+    // Bloom the nodes, and do it from the accumulated buffer rather than from
+    // any single tracer.
+    //
+    // Collapsed cores read as gold in the colour ramp but never separate from
+    // the filaments in brightness. The obvious remedy — scaling a tracer's
+    // output by its own density — was tried twice and brought back per-tracer
+    // speckle both times, because this density is a property of one mass
+    // element and says nothing about how crowded its neighbourhood is.
+    //
+    // Bloom keys off the summed HDR value at a pixel, which is exactly the
+    // quantity that means "many splats landed here". A lone high-density tracer
+    // cannot reach the threshold no matter how compressed it is; a genuine node,
+    // where hundreds overlap, clears it easily. So the discrimination the shader
+    // could not make is available for free one stage later.
+    //
+    // The default threshold is tuned for a system view, where a star is the only
+    // thing meant to bloom. A web filament peaks far below that, so the cosmos
+    // gets its own.
+    const fx = this.ctx.engine?.postfx;
+    if (fx) {
+      this._prevBloom = {
+        threshold: fx.bloomThreshold,
+        knee: fx.bloomKnee,
+        strength: fx.bloomStrength,
+      };
+      // Swept live against the captured frame. Below about 0.4 the filaments
+      // bloom along with the nodes and the whole field lifts; above about 0.7 so
+      // little clears the threshold that extra strength cannot pay for it.
+      fx.bloomThreshold = 0.55;
+      fx.bloomKnee = 0.85;
+      fx.bloomStrength = 2.8;
+    }
+  }
+
+  exit() {
+    const fx = this.ctx.engine?.postfx;
+    if (fx && this._prevBloom) {
+      fx.bloomThreshold = this._prevBloom.threshold;
+      fx.bloomKnee = this._prevBloom.knee;
+      fx.bloomStrength = this._prevBloom.strength;
+      this._prevBloom = null;
+    }
   }
 
   update(dt, time) {

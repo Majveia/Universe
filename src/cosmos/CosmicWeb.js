@@ -466,6 +466,16 @@ export class CosmicWeb {
         // SPH makes, and it is why the web looks continuous at 200k particles
         // when a 1px dot needs tens of millions.
         uPointScale: { value: (boxSize / side) * 0.95 },
+        // Do not tighten this to sharpen the close view.
+        //
+        // Flying inside the volume puts many splats at the cap at once, all the
+        // same width, and the result reads softer than the wide shot — which
+        // looks like the cap being too generous. Dropping it to 16 was tried and
+        // made things worse in the way this file's header warns about: a kernel
+        // narrower than the mean interparticle spacing turns a finite particle
+        // count into confetti, and the medium started coming apart into dots
+        // again. The close-range softness is the price of a kernel wide enough to
+        // stay continuous, not a symptom of the cap being wrong.
         uMaxPointPx: { value: 26.0 },
         uFlowAmp: { value: 0.06 },
         uFade: { value: 1 },
