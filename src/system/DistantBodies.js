@@ -111,10 +111,24 @@ const MAG_FAINT = 28.0;
  * contrast at the bright end, which no viewer can miss, in exchange for eight
  * bodies that were previously indistinguishable from each other.
  */
-const MAG_FLOOR = 0.22;
+const MAG_FLOOR = 0.30;
 
-/** Peak emitted level for the brightest body, matched to the sky field's range. */
-const AMP = 4.5;
+/**
+ * Peak emitted level for the brightest body.
+ *
+ * Set so the FAINTEST planet still outshines the brightest background star, not
+ * so the population merely overlaps the star field's range. Matching the two
+ * ranges was the earlier mistake and it had the sky backwards: seen from inside
+ * a planetary system the planets are the brightest points in it after the star
+ * itself — Venus reaches magnitude -4.9 and Jupiter -2.9 against Sirius at -1.5,
+ * a difference of more than twenty in flux. Drawing a world at 40 AU dimmer than
+ * an arbitrary background star is not conservative, it is wrong, and it is why
+ * eight of the ten here were indistinguishable from the field around them.
+ *
+ * The sky field peaks near 4.0 with a 5.8px sprite, so the floor lands about
+ * there and the inner giants sit well above it.
+ */
+const AMP = 12.0;
 
 /** Below this projected diameter (px) a body is drawn only as a point. */
 export const RESOLVE_LO = 2.5;
@@ -211,7 +225,9 @@ export class DistantBodies {
       this._col[o] = this._c.r * amp;
       this._col[o + 1] = this._c.g * amp;
       this._col[o + 2] = this._c.b * amp;
-      this._siz[i] = 2.2 + 4.2 * b;
+      // Floor size sits above the sky field's median star too, so a planet is
+      // the larger mark as well as the brighter one.
+      this._siz[i] = 2.6 + 4.2 * b;
     }
 
     for (let i = n; i < this.count; i++) this._siz[i] = 0;

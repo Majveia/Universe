@@ -232,6 +232,32 @@ Defects found in earlier rounds, kept here so they are not rediscovered:
   simultaneously puts the camera on the unlit face, where the dense annuli
   correctly go black and the sheet collapses into the concentric wires the same
   rubric fails the shot for.
+
+- Matching a new population's brightness to an existing one is not the safe
+  choice — it is a claim about which should dominate, and it can be flatly
+  wrong. Planets were drawn to overlap the sky field's range, when from inside a
+  system the planets are the brightest things in it after the star: Venus at
+  −4.9 against Sirius at −1.5 is more than twenty in flux. Ask what the real sky
+  does before deciding two populations should look comparable.
+
+- Clip and cull thresholds must use the real near plane, not a token epsilon.
+  Testing `w <= 1e-4` against a near plane of `0.02` lets vertices well inside it
+  through; their screen position is xy over a thousandth, which swamps any
+  direction computed from it, and the hardware clips them afterwards leaving a
+  sliver. Compare against the actual value and pass it in as a uniform.
+
+- A curve sampled at a fixed count undersamples when the camera comes close.
+  192 samples around an orbit are ample from outside and arbitrarily far apart on
+  screen from within it, so guard on projected segment length — anything spanning
+  several frame heights is not part of a curve any more.
+
+- A per-particle quantity is not a measure of local crowding, and no threshold
+  makes it one. Boosting tracer brightness by the Zel'dovich density to make
+  cluster cores read brings back per-tracer speckle at every gate setting,
+  because that density describes how much one mass element was compressed, not
+  how many neighbours it has on screen. If the goal is "this region should look
+  like a cluster", the count has to happen somewhere neighbours exist — on the
+  CPU — and the cluster drawn as an object.
 - Additive blending integrates the full depth of a volume, which averages
   independent structures together and cancels them. Depth extinction is what
   restores a legible slab.

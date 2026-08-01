@@ -409,26 +409,30 @@ export class SystemRealm extends Realm {
           uOpacity: { value: 0.16 },
           uWidthPx: { value: 1.6 },
           uHalfRes: { value: new THREE.Vector2(720, 405) },
+          uNear: { value: this.near },
         },
         vertexShader: /* glsl */ `
           attribute vec3 aNext;
           attribute float aSide;
           uniform float uWidthPx;
           uniform vec2 uHalfRes;
+          uniform float uNear;
           varying float vSide;
           void main(){
             vSide = aSide;
             vec4 cA = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             vec4 cB = projectionMatrix * modelViewMatrix * vec4(aNext, 1.0);
 
-            // Drop any segment with an endpoint at or behind the eye. The
-            // offset below is divided back through w, so a w near zero turns a
-            // 1.6px ribbon into a wedge across the whole frame — which is
-            // exactly what happens on a close approach, where the orbit
-            // ellipse passes the camera. A hardware line clipped at the near
-            // plane is still one pixel wide; a screen-space ribbon is not, and
-            // has to be culled instead.
-            if (cA.w <= 1e-4 || cB.w <= 1e-4){
+            // Drop any segment with an endpoint at or inside the near plane.
+            //
+            // The threshold has to be the actual near distance, not a token
+            // epsilon. At 1e-4 a vertex sitting well inside a near plane of
+            // 0.02 still passed, and its screen position — xy divided by a w of
+            // a thousandth — comes out astronomically large, which swamps the
+            // segment direction and leaves the perpendicular pointing anywhere.
+            // The hardware then clips the vertex anyway, and what survives is a
+            // long thin sliver hanging off the geometry.
+            if (cA.w <= uNear || cB.w <= uNear){
               gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
               return;
             }
@@ -439,6 +443,16 @@ export class SystemRealm extends Realm {
             vec2 sB = (cB.xy / cB.w) * uHalfRes;
             vec2 d = sB - sA;
             float len = length(d);
+
+            // A segment spanning several screen heights is not a segment: with a
+            // fixed 192 samples around the ellipse, an orbit passing close to the
+            // camera puts adjacent samples arbitrarily far apart on screen. Drawn,
+            // it is a streak across the frame rather than part of a curve.
+            if (len > uHalfRes.y * 8.0){
+              gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+              return;
+            }
+
             d = len > 1e-6 ? d / len : vec2(1.0, 0.0);
             vec2 nrm = vec2(-d.y, d.x);
             vec2 offNdc = (nrm * uWidthPx * 0.5 * aSide) / uHalfRes;

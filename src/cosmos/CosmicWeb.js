@@ -258,6 +258,26 @@ void main(){
   // being many of them in one place, which in a collapsed region there are.
   float brightness = (0.85 + pow(d, 0.90) * 0.45) * vFlux * atten * vEdge * uIntensity;
 
+  // NOTE — do not add a per-tracer boost here to make the nodes punch.
+  //
+  // Collapsed cores separate from the filaments in colour but not in luminance,
+  // so a cluster reads as a differently-tinted piece of filament. The obvious
+  // fix is a density-gated multiplier on this line, and it was tried twice, at
+  // smoothstep(4, 12) * 2.2 and again at the much tighter smoothstep(9, 20) *
+  // 1.5. Both brought the round-2 speckle straight back.
+  //
+  // The reason is that this density is the Zel'dovich Jacobian, which every
+  // particle carries individually — it says how much that one mass element was
+  // compressed, not how crowded its neighbourhood is on screen. A single tracer
+  // in an ordinary sheet can hold a high value, and any multiplier keyed to it
+  // makes that tracer a hard dot. There is no threshold that separates "in a
+  // cluster" from "individually dense", because the quantity does not carry
+  // that distinction.
+  //
+  // Making nodes punch needs a different mechanism entirely: find the clusters
+  // on the CPU, where neighbours can actually be counted, and draw them as
+  // objects rather than scaling the tracers that happen to be in them.
+
   gl_FragColor = vec4(col * brightness * alpha, alpha * uFade);
 }
 `;
