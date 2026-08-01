@@ -66,7 +66,23 @@ varying vec3 vLocal;
 // Optical depth across the ring plane. Everything downstream is a function of
 // this one number, which is what makes the lit/unlit inversion fall out
 // automatically instead of needing two separate looks.
-float opticalDepth(float t){
+// How much of an octave survives at this screen footprint.
+//
+// A ring seen near edge-on compresses the whole radial coordinate into a few
+// pixels, so one pixel can span several periods of the fine banding. Sampling
+// a periodic function once per period returns an arbitrary point on it, and
+// the annulus breaks into dashes — which is what the inner edge was doing where
+// it passes closest to the planet's limb, and why it looked like stair-stepping
+// rather than like noise. Fade each octave out as its period approaches the
+// footprint and the sheet stays continuous instead of sampling garbage.
+//
+// Nyquist puts the limit at half a period per pixel; the rolloff starts at a
+// quarter so an octave is already gone by the time it would alias.
+float bandLimit(float freq, float dt){
+  return 1.0 - smoothstep(0.25, 0.5, freq * dt);
+}
+
+float opticalDepth(float t, float dt){
   // Radial profile, after Saturn's. The previous envelope was flat across the
   // whole sheet — it only rolled off at the very edges — so optical depth
   // barely varied with radius and the rings read as one grey annulus with noise
@@ -85,9 +101,9 @@ float opticalDepth(float t){
   // them reading as a gradient. Centred on 1.0 so it modulates the profile
   // above rather than replacing it.
   float b = 1.0
-    + 0.34 * snoise(vec3(t * 42.0, uSeed, 0.0))
-    + 0.20 * snoise(vec3(t * 138.0, uSeed * 1.7, 0.0))
-    + 0.11 * snoise(vec3(t * 390.0, uSeed * 2.3, 0.0));
+    + 0.34 * snoise(vec3(t * 42.0, uSeed, 0.0))        * bandLimit(42.0, dt)
+    + 0.20 * snoise(vec3(t * 138.0, uSeed * 1.7, 0.0)) * bandLimit(138.0, dt)
+    + 0.11 * snoise(vec3(t * 390.0, uSeed * 2.3, 0.0)) * bandLimit(390.0, dt);
 
   float tau = env * max(b, 0.0) * 2.6;
 
@@ -102,7 +118,14 @@ float opticalDepth(float t){
     // Clear only the very centre of the resonance and feather hard. A gap
     // that is wide relative to its feather turns the disc into concentric
     // wires; Saturn's real gaps are thin lines in a continuous sheet.
-    float clear = smoothstep(w * 0.12, w, d);
+    //
+    // The feather also cannot be finer than a pixel. At a grazing angle the
+    // 0.12w inner edge fell well inside one footprint, so the gap wall landed
+    // between samples and the rim came out dotted. Widen it to the footprint
+    // when the footprint is coarser, and keep the edges ordered — a reversed
+    // smoothstep is undefined in GLSL and this file has been bitten by it.
+    float lo = min(max(w * 0.12, dt * 1.5), w * 0.9);
+    float clear = smoothstep(lo, w, d);
     float wave = exp(-pow((t - g - w * 1.4) / (w * 0.9), 2.0)) * 0.7;
     tau = tau * clear + wave * env;
   }
@@ -112,9 +135,12 @@ float opticalDepth(float t){
 void main(){
   float r = length(vLocal.xz);
   float t = (r - uInner) / (uOuter - uInner);
+  // Taken before the discard: derivatives are undefined once a quad is only
+  // partly alive, and the ring's edges are exactly where quads get cut.
+  float dt = fwidth(t);
   if (t < 0.0 || t > 1.0) discard;
 
-  float tau = opticalDepth(t);
+  float tau = opticalDepth(t, dt);
   if (tau < 0.002) discard;
 
   // The view direction has to be in the SAME space as the plane normal and as
