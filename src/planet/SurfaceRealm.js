@@ -305,6 +305,79 @@ export class SurfaceRealm extends Realm {
     this.ctx.player = this.player;
   }
 
+  /**
+   * Put the observer somewhere that actually exercises a rubric line.
+   *
+   * The realm owns this rather than the capture harness for the reason in the
+   * standing failure list: position and aim are one quantity, and any API that
+   * lets a caller move the viewpoint without re-deriving the look direction
+   * eventually gets called that way and the subject leaves the frame.
+   *
+   * It also exists because the default spawn cannot test what the ground shots
+   * ask about. `findLandingSite` scores `-slope * 220` — it is explicitly
+   * hunting for somewhere flat enough to stand, which is the right thing for
+   * arriving and the wrong thing for judging whether this planet has mountains.
+   * Grading terrain relief on the flattest spot the generator could find is the
+   * same mistake as grading albedo on an EXOTIC world.
+   *
+   *   ground  eye height on open ground, horizon across the frame
+   *   relief  the highest ground within 9 km, viewed from below and away
+   *   sun     into the sun near the horizon, for haze and aerial perspective
+   */
+  frame(kind = 'ground') {
+    const put = (x, z, yaw, pitch) => {
+      const h = this.sampleHeight(x, z);
+      const p = this.player;
+      if (p) {
+        p.teleport(_v.set(x, h + 2.0, z));
+        p.setAim(yaw, pitch);
+      } else {
+        this.ctx.camera.position.set(x, h + 1.7, z);
+        this.ctx.camera.lookAt(x + Math.sin(yaw) * 100, h + 1.7 - Math.tan(pitch) * 100, z - Math.cos(yaw) * 100);
+      }
+    };
+
+    if (kind === 'sun') {
+      // Yaw so the sun sits ahead. Local x is east and z is south, and the
+      // camera looks down -z at yaw 0, so this is atan2 of the sun's horizontal
+      // components with z negated.
+      const s = this.sunDirection;
+      put(0, 0, Math.atan2(s.x, -s.z), -0.08);
+      return;
+    }
+
+    if (kind === 'relief') {
+      // Coarse sweep for the highest ground in sight. 96 samples a side over
+      // 18 km is 3.4k height queries — a fraction of a second, and far cheaper
+      // than shipping a hand-picked coordinate that rots the next time the
+      // terrain parameters move.
+      const REACH = 9000, N = 96;
+      let bx = 0, bz = 0, best = -Infinity;
+      for (let j = 0; j < N; j++) {
+        for (let i = 0; i < N; i++) {
+          const x = -REACH + (i / (N - 1)) * REACH * 2;
+          const z = -REACH + (j / (N - 1)) * REACH * 2;
+          const h = this.sampleHeight(x, z);
+          if (h > best) { best = h; bx = x; bz = z; }
+        }
+      }
+      // Stand back far enough that the peak reads as a landform rather than as
+      // a wall, and low enough that it rises above the horizon line.
+      const d = Math.max(1800, Math.hypot(bx, bz) * 0.35);
+      const a = Math.atan2(bx, bz);
+      const ox = bx - Math.sin(a) * d;
+      const oz = bz - Math.cos(a) * d;
+      const oh = this.sampleHeight(ox, oz);
+      // Pitch is derived from the geometry, not chosen: the peak is put on the
+      // horizon line whatever its height turned out to be.
+      const pitch = Math.atan2(best - (oh + 2.0), d);
+      put(ox, oz, Math.atan2(bx - ox, -(bz - oz)), pitch);
+      return;
+    }
+
+    put(0, 0, 0.6, -0.02);
+  }
+
   // --- the world contract -----------------------------------------------------
   //
   // These five members are what `player/` requires. They are deliberately thin

@@ -86,6 +86,26 @@ being impressive.
 - **gasgiant** — Juno imagery of Jupiter. Bands must shear against each other,
   vortices must sit in the shear zones, and the poles must differ in character
   from the equator.
+- **surface-ground** — *Red Dead 2* and *Death Stranding* at eye height, and
+  rover photography from Mars. The bar is detail at three scales without a
+  visible transition between them: something under the boot, something at a
+  hundred metres, something at the horizon. Failure modes: a smooth shaded
+  surface with no near detail at all; a horizon silhouette that steps where LOD
+  chunks meet; ground that reads as one flat colour because the biome splat
+  never varies; the terrain simply stopping short of the sky.
+- **surface-relief** — Apollo Hadley Rille, Kilimanjaro from the plain. The
+  subject is whether the tectonics and erosion that TerrainGen simulates
+  actually reach the eye. A ridge must have a *direction* — real ranges are
+  linear because they are the seam between two plates — and valleys must run
+  downhill in a connected network rather than appearing as dents. Failure modes:
+  isotropic lumps; a ridge line that reads as noise rather than as a landform;
+  erosion visible in the height field but not in the shading.
+- **surface-sun** — into the light, low. Aerial perspective is what carries
+  depth in a landscape, so the test is whether distance is legible at all:
+  successive ridges must separate by haze, and the haze must warm toward the
+  sun. Failure modes: no depth cue, so the scene reads as a painted flat; haze
+  so heavy it becomes fog and eats the terrain; a sun that is a bloom disc
+  pasted on the sky rather than a light source the ground agrees with.
 
 ## Standing failure list
 

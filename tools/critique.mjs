@@ -150,6 +150,61 @@ const SHOTS = [
       r.aimAtFollowTarget();
     }
   `],
+  // --- surface ---------------------------------------------------------------
+  //
+  // The ground is a different subject from everything above and needs its own
+  // seeds. These pick the planet by sweeping the system for the one with the
+  // most vertical range to work with, because a rubric line about relief cannot
+  // be graded on a world that has none — and the landing site itself is chosen
+  // for flatness, so the shot has to go looking.
+  //
+  // Longer settle than the space shots: the terrain quadtree streams, and a
+  // frame captured before it converges reviews the LOD system's transient
+  // rather than the terrain.
+  ['surface-ground', 20, `
+    await ctx.director.goTo('system', { seed: 558 }, 'fade', 0.05);
+    await new Promise(r => setTimeout(r, 700));
+    const sys = ctx.director.current;
+    let best = null, bs = -1;
+    sys.planets.forEach((p) => {
+      const rec = p.record;
+      if (rec.isGiant) return;
+      const s = (rec.terrain?.maxElevation ?? 0) + (rec.hasWater ? 1500 : 0);
+      if (s > bs) { bs = s; best = rec; }
+    });
+    await ctx.director.goTo('surface', { record: best || sys.planets[0].record }, 'fade', 0.05);
+    ctx.director.current.frame('ground');
+  `],
+  ['surface-relief', 22, `
+    await ctx.director.goTo('system', { seed: 558 }, 'fade', 0.05);
+    await new Promise(r => setTimeout(r, 700));
+    const sys = ctx.director.current;
+    let best = null, bs = -1;
+    sys.planets.forEach((p) => {
+      const rec = p.record;
+      if (rec.isGiant) return;
+      const s = rec.terrain?.maxElevation ?? 0;
+      if (s > bs) { bs = s; best = rec; }
+    });
+    await ctx.director.goTo('surface', { record: best || sys.planets[0].record }, 'fade', 0.05);
+    ctx.director.current.frame('relief');
+  `],
+  // Into the sun, low. Aerial perspective is the whole subject: without depth
+  // haze a landscape reads as a flat cutout, and with too much it reads as fog.
+  ['surface-sun', 20, `
+    await ctx.director.goTo('system', { seed: 17 }, 'fade', 0.05);
+    await new Promise(r => setTimeout(r, 700));
+    const sys = ctx.director.current;
+    let best = null, bs = -1;
+    sys.planets.forEach((p) => {
+      const rec = p.record;
+      if (rec.isGiant) return;
+      const s = (rec.atmosphere ?? 0) * 2 + (rec.terrain?.maxElevation ?? 0) / 4000;
+      if (s > bs) { bs = s; best = rec; }
+    });
+    await ctx.director.goTo('surface', { record: best || sys.planets[0].record }, 'fade', 0.05);
+    ctx.director.current.frame('sun');
+  `],
 ];
 
 const selected = only.length ? SHOTS.filter((s) => only.includes(s[0])) : SHOTS;
