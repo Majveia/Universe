@@ -16,6 +16,7 @@ import { settings } from './core/Settings.js';
 import { CosmosRealm } from './cosmos/CosmosRealm.js';
 import { SystemRealm } from './system/SystemRealm.js';
 import { SurfaceRealm } from './planet/SurfaceRealm.js';
+import { TouchControls } from './ui/TouchControls.js';
 
 const bootEl = document.getElementById('boot');
 const bootSub = document.getElementById('boot-sub');
@@ -71,7 +72,17 @@ async function main() {
 
   // Descending a scale is the core verb of the whole thing, so it gets a key,
   // a gesture and a programmatic hook rather than being buried in a menu.
-  ctx.descend = async (seed) => {
+  // A transition is seconds long and a thumb is faster than that. Without a
+  // latch, a second tap lands mid-warp and starts a transition out of a realm
+  // the director is still moving into.
+  let travelling = false;
+  const travel = (fn) => async (...args) => {
+    if (travelling) return;
+    travelling = true;
+    try { await fn(...args); } finally { travelling = false; }
+  };
+
+  ctx.descend = travel(async (seed) => {
     if (director.currentKey === Scale.COSMOS) {
       await director.goTo(Scale.SYSTEM, { seed: seed ?? (Math.floor(Date.now() / 1000) & 0xffff) }, 'warp', 1.8);
       ctx.scale = Scale.SYSTEM;
@@ -87,8 +98,8 @@ async function main() {
       await director.goTo(Scale.SURFACE, { record: target.record }, 'warp', 2.0);
       ctx.scale = Scale.SURFACE;
     }
-  };
-  ctx.ascend = async () => {
+  });
+  ctx.ascend = travel(async () => {
     if (director.currentKey === Scale.SURFACE) {
       await director.goTo(Scale.SYSTEM, { seed: ctx.lastSystemSeed }, 'warp', 1.6);
       ctx.scale = Scale.SYSTEM;
@@ -98,11 +109,53 @@ async function main() {
       await director.goTo(Scale.COSMOS, {}, 'warp', 1.6);
       ctx.scale = Scale.COSMOS;
     }
-  };
+  });
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Enter') ctx.descend();
     if (e.code === 'Backspace') ctx.ascend();
   });
+
+  // --- touch ------------------------------------------------------------------
+  //
+  // Until now Enter and Backspace were the ONLY way to change scale anywhere in
+  // the project, which meant a phone could look at the cosmic web and never
+  // leave it. Input has implemented the whole touch layer since the beginning —
+  // floating stick, swipe-look, pinch, virtual buttons — and TouchControls has
+  // been sitting unreferenced next to it; all that was missing was the two of
+  // them being introduced, and something to put in the button cluster.
+  //
+  // Scale changes go through the same virtual-button path as every other
+  // action, so there is one code path for "the player asked to descend" whether
+  // it arrived from a thumb, a key or a gamepad.
+  const touch = new TouchControls(document.getElementById('ui'), ctx);
+  ctx.touch = touch;
+  touch.setVisible(settings.isTouch);
+
+  const ACTIONS = {
+    [Scale.COSMOS]: [
+      { id: 'descend', label: 'Enter system', icon: '▼' },
+    ],
+    [Scale.SYSTEM]: [
+      { id: 'descend', label: 'Land', icon: '▼' },
+      { id: 'ascend', label: 'Leave system', icon: '▲' },
+    ],
+  };
+
+  /**
+   * Rebuild the cluster for wherever we are.
+   *
+   * On the ground the player owns the list — it already publishes exactly the
+   * shape TouchControls wants, and it is the only thing that knows whether you
+   * are near a door or sitting in a vehicle. Everywhere else the only verb is
+   * changing scale, so the realm key alone decides.
+   */
+  function touchActions() {
+    if (director.currentKey === Scale.SURFACE && ctx.player) {
+      return [...(ctx.player.contextActions || []),
+        { id: 'ascend', label: 'To orbit', icon: '▲' }];
+    }
+    return ACTIONS[director.currentKey] || [];
+  }
 
   await boot('collapsing dark matter');
   await director.ensureBuilt(Scale.COSMOS);
@@ -122,8 +175,13 @@ async function main() {
 
   engine.start((dt, time) => {
     input.update(dt);
+    // One path for "the player asked to change scale", whatever pressed it.
+    if (input.pressed('descend')) ctx.descend();
+    if (input.pressed('ascend')) ctx.ascend();
+    touch.setActions(touchActions());
     director.update(dt, time);
     director.render();
+    touch.update(dt);
     input.endFrame();
   });
 
