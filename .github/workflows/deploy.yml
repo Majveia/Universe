@@ -2,7 +2,13 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [claude/aaa-3d-universe-threejs-rzckv5]
+    # Pages hosts one site, so whichever branch pushes last is what is live.
+    # The critic-loop branch is listed alongside the default one so the work in
+    # flight can actually be flown, rather than only being reviewable as stills
+    # in shots/critique. Drop it from this list once the branch merges.
+    branches:
+      - claude/aaa-3d-universe-threejs-rzckv5
+      - claude/workflows-continuation-y4ys11
   workflow_dispatch:
 
 permissions:
