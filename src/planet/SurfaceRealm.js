@@ -37,6 +37,7 @@ import { biomeProfile } from './Biomes.js';
 import { QuadSphere } from './QuadSphere.js';
 import { makeStar, makeSystem } from '../universe/Catalog.js';
 import { settings } from '../core/Settings.js';
+import { PlayerController } from '../player/PlayerController.js';
 
 const _v = new THREE.Vector3();
 const _n = new THREE.Vector3();
@@ -89,12 +90,12 @@ export class SurfaceRealm extends Realm {
     // Re-entering the same world keeps the terrain that is already generated;
     // walking back to a place should not regenerate it.
     if (this.planet && record.id === this.planet.id && this.terrain) {
-      this._placeCamera();
+      this._spawnPlayer();
       return;
     }
 
     await this._buildWorld(record);
-    this._placeCamera();
+    this._spawnPlayer();
   }
 
   _lookup(params) {
@@ -271,11 +272,37 @@ export class SurfaceRealm extends Realm {
     this.scene.add(this.sky);
   }
 
-  _placeCamera() {
-    const cam = this.ctx.camera;
-    const h = this.field.localHeight(0, 0);
-    cam.position.set(0, h + 1.7, 0);
-    cam.lookAt(30, h + 1.7, -60);
+  /**
+   * Put a body on the ground.
+   *
+   * The realm is its own world: it implements the five members the motor needs,
+   * so it hands `this` straight to the controller rather than adapting between
+   * two shapes of the same data. The controller takes ownership of `ctx.camera`
+   * through its own rig from here on, which is why nothing else in this file
+   * positions the camera any more.
+   */
+  _spawnPlayer() {
+    // Spawn a little above the surface and let the motor settle onto it. Placing
+    // feet exactly on the sampled height means any disagreement between the
+    // sample and the motor's own ground query resolves as a jitter on frame one;
+    // a short drop resolves it as a step down, which is invisible.
+    const h = this.sampleHeight(0, 0);
+    const spawn = _v.set(0, h + 2.0, 0);
+
+    if (this.player) {
+      this.player.setWorld(this);
+      this.player.teleport(spawn);
+      return;
+    }
+
+    this.player = new PlayerController(this.ctx, this, {
+      scene: this.scene,
+      spawn,
+      seed: (this.planet.seed ?? 1) ^ 0x5c4f,
+      settings,
+    });
+    this.scene.add(this.player.group);
+    this.ctx.player = this.player;
   }
 
   // --- the world contract -----------------------------------------------------
