@@ -87,7 +87,7 @@ void main(){
 
   // Grow as they disperse: a puff is a puff because it expands.
   float grow = 1.0 + vAge * 2.6;
-  float fade = smoothstep(1.0, 0.72, vAge);
+  float fade = 1.0 - smoothstep(0.72, 1.0, vAge);
   float size = aParams.z * grow * fade;
   vSoft = fade;
 
@@ -160,10 +160,10 @@ void main(){
   vec2 p = vUv * 2.0 - 1.0;
   vec2 q = abs(vec2(p.x * 1.85, p.y)) - vec2(0.55, 0.72);
   float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - 0.24;
-  float sole = smoothstep(0.06, -0.05, d);
+  float sole = 1.0 - smoothstep(-0.05, 0.06, d);
   // Tread: three lateral bars pressed deeper than the sole around them.
   float tread = smoothstep(0.45, 0.85, abs(sin(p.y * 7.5)));
-  float arch = smoothstep(0.22, 0.0, abs(p.y + 0.02)) * 0.6;
+  float arch = (1.0 - smoothstep(0.0, 0.22, abs(p.y + 0.02))) * 0.6;
   float mark = sole * (0.55 + tread * 0.45) * (1.0 - arch);
 
   float a = mark * vFade * 0.62;
@@ -191,7 +191,7 @@ void main(){
   float r = length(p);
   // An expanding shell: the ring rides outward as it fades, so a hard landing
   // reads as a pressure wave rather than as a decal that grew.
-  float edge = smoothstep(0.06, 0.0, abs(r - mix(0.15, 1.0, uAge)));
+  float edge = 1.0 - smoothstep(0.0, 0.06, abs(r - mix(0.15, 1.0, uAge)));
   float a = edge * (1.0 - uAge) * (1.0 - uAge);
   if (a < 0.004) discard;
   gl_FragColor = vec4(uColor, a * 0.55);

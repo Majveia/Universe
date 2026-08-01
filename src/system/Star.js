@@ -325,7 +325,7 @@ void main(){
   float life = 0.5 + 0.5 * sin(uTime * 0.045 + vLoop * 2.399);
   float across = 1.0 - abs(vSide);
   float a = across * across * clump * (0.6 + 0.4 * flow) * smoothstep(0.0, 0.35, life);
-  a *= smoothstep(0.0, 0.10, vU) * smoothstep(1.0, 0.90, vU);
+  a *= smoothstep(0.0, 0.10, vU) * (1.0 - smoothstep(0.90, 1.0, vU));
   vec3 col = mix(vec3(1.0, 0.22, 0.16), blackbody(uTemp * 0.6), 0.30);
   gl_FragColor = vec4(col * a * uIntensity, 1.0);
 }

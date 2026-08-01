@@ -13,13 +13,30 @@ nobody can say which decision made it one.
 ## How to run a round
 
 ```bash
-npm run build
 node tools/critique.mjs --out shots/critique/round-N
 ```
 
+The harness builds for itself and refuses to run if the build fails, because a
+round captured against a stale `dist/` reviews code that is not the code on disk.
+Pass `--no-build` only when you have just built by hand.
+
 Then look at every frame. Not a sample — every frame. Write the verdict into
 `shots/critique/round-N/VERDICT.md` with a line per shot, and keep the previous
-round on disk so the two can be compared directly.
+round on disk so the two can be compared directly. The frames are gitignored;
+the `VERDICT.md` files are not, so the findings survive the machine that made
+them.
+
+Before blaming a shader, check that the shot is testing what it claims to. A
+criterion is only exercised if the subject can exercise it: judging "albedo
+plausible for the stated type" on an EXOTIC world, or band structure through a
+ring plane crossing the disc, grades the renderer on a frame that was never
+capable of passing. Seeds in `tools/critique.mjs` are chosen for this and each
+carries a note saying what it was chosen for.
+
+And prefer an ablation to an argument. Rendering one layer at a time settles in
+a minute what a plausible-sounding causal story can get wrong for an hour — in
+round 2 the speckle was confidently attributed to the galaxy layer, and turning
+that layer off changed the frame not at all.
 
 ## Scoring
 
@@ -74,8 +91,173 @@ being impressive.
 
 Defects found in earlier rounds, kept here so they are not rediscovered:
 
-- Reversed-edge `smoothstep` is undefined in GLSL and produces hard rectangular
-  artefacts. Always order the edges and negate the argument instead.
+- Reversed-edge `smoothstep` is undefined in GLSL. Always order the edges and
+  negate the argument, or write `1.0 - smoothstep(lo, hi, x)`. Note that the
+  JavaScript helper in `core/Noise.js` *does* handle reversed edges correctly —
+  its denominator goes negative and flips the ramp — so JS call sites are fine
+  and only GLSL ones need fixing. Worth measuring before blaming: on ANGLE /
+  SwiftShader the reversed form returns results identical to the corrected one,
+  so it can sit latent for a long time and then break on a driver that folds it
+  differently. Sweep for it with a script; round 2 found sixteen GLSL sites when
+  the list implied one.
+
+- A vector is only meaningful with the space it lives in. `-(modelViewMatrix *
+  position)` is a **view-space** view direction; comparing its `.y` against a
+  quantity computed in object-local space silently reinterprets "distance above
+  the plane" as "height up the screen", and the discontinuity lands on the middle
+  scanline. If a hard artefact sits at exactly half the frame height or width,
+  suspect a space mismatch before suspecting geometry.
+
+- Coverage and radiance are different quantities. For a participating medium,
+  alpha is extinction along the view path (`1 - exp(-tau)`) and rgb is the light
+  scattered toward the eye; driving alpha from the radiance makes a dimly-lit
+  volume transparent, so stars read straight through a sheet several optical
+  depths thick. Premultiplied alpha lets the shader emit the two independently.
+
+- With equal-mass tracers, density is already encoded in how many land on a
+  pixel. Multiplying each tracer by its own local density on top of that counts
+  the clustering twice and lets the densest few per cent punch through as
+  individual points — the medium is sampled correctly and then buried under its
+  own brightest samples. Keep any per-tracer density exponent below one and let
+  overlap carry the structure.
+
+- Position and aim are one quantity. Any camera API that lets a caller move the
+  viewpoint without re-deriving the look direction will eventually be called that
+  way, and the subject leaves the frame. A near-empty `tris` count in the capture
+  log is the cheapest possible detector for it.
+
+- Rings lit edge-on are *correctly* almost invisible: single-scattering
+  reflectance carries a `mu0/(mu + mu0)` factor, and Saturn all but disappears at
+  equinox. If a ring shot looks empty, check the star's elevation above the ring
+  plane before touching the shader.
+
+- Express cull thresholds in projected pixels, never in radians or world units.
+  A threshold of `1.5e-4` radians sounds conservative and is a fifth of a pixel
+  at a 70-degree field of view, so bodies passed the test, entered the draw list,
+  cost a full shader, and could not be seen. If "visible" does not mean "can be
+  seen", the flag is lying. Anything below roughly two pixels needs a different
+  representation, not a smaller triangle.
+
+- A power curve cannot compress a range spanning many orders of magnitude while
+  keeping the ordering readable. One system spans about nine orders in irradiance
+  and no exponent gentle enough to lift the faint end off the floor leaves the
+  bright end distinguishable — most of the population clamps to one value. Use a
+  logarithm: apparent magnitude, `-2.5 * log10(E / E_ref)`, exists for precisely
+  this and holds nine orders in a span of about 23.
+
+- When one colour carries both hue and brightness, separate them. Multiplying a
+  computed brightness by a dark base colour dims a dark object twice over — once
+  for the physical reason already in the brightness term, once again for its
+  albedo. Normalise the tint to unit luminance and let the magnitude carry level.
+
+- Screen-space ribbon lines must cull segments with an endpoint at or behind the
+  near plane. The perpendicular offset is divided back through `w`, so a `w` near
+  zero turns a 1.6px ribbon into a wedge across the entire frame. This does not
+  show up in wide shots and appears the moment the camera approaches anything the
+  line passes near. A hardware line clipped at the near plane stays one pixel
+  wide, which is why swapping `THREE.Line` for a strip needs this guard added at
+  the same time.
+
+- Navigational furniture should fade when it stops carrying information. An orbit
+  whose angular radius exceeds the field of view is no longer an ellipse, just a
+  line across the screen; several of those stack into a bundle that dominates the
+  frame while telling the viewer nothing.
+
+- Worley `F2 - F1` draws cell *boundaries* and gives hard polygons — cracked mud,
+  crazed glaze, a Voronoi diagram. For round blobs (cyclones, craters, colonies,
+  anything organic) use a falloff on the F1 *distance* instead. Reaching for the
+  edge function by habit is the single fastest way to make a natural surface look
+  manufactured.
+
+- A feature can be geometrically correct and still never reach the eye.
+  Foreshortening crushes everything above about 55 degrees of latitude into the
+  last few pixels of the rim, so a polar effect defined to start there is
+  invisible from any equatorial vantage. Check where a feature lands *on screen*,
+  not where it lands on the sphere — and if the shot cannot see the thing the
+  rubric asks about, move the camera.
+
+- Detail gated behind a type-specific parameter is absent on every other type.
+  The third scale of terrain relief sat behind a dune strength that is zero on
+  anything but a desert, so temperate worlds had continental and orogenic
+  structure and then nothing at all. If the rubric asks for three scales, one of
+  them cannot be optional.
+
+- Finite-difference normals impose a frequency ceiling. With epsilon `e`, detail
+  above roughly `1/(4e)` aliases into sparkle instead of resolving into surface.
+  Put the highest-frequency variation in albedo, which is never differentiated
+  and therefore costs nothing to sample finely.
+
+- A clamp is not a decision. When a floor ends up doing the work for most of the
+  population, the range mapping has already failed and the clamp is hiding it —
+  and whatever it clamps to is a value nobody chose. Either fix the mapping or
+  make the floor an explicit, stated choice with a reason.
+
+- Before changing a shader to make something visible, check whether the subject
+  can show it at all. A ring umbra reaches `1/sin(sun elevation)` planet radii;
+  against an inner ring edge at 1.35 radii, any elevation above about 48 degrees
+  puts the shadow entirely inside the hole. Two rubric criteria pulling opposite
+  ways — bright rings want high elevation, a visible shadow wants low — is a sign
+  to change the subject, not to compromise the angle.
+
+- Backticks inside a `/* glsl */` template literal terminate the shader string
+  and produce a JavaScript syntax error somewhere unrelated-looking. Do not
+  quote identifiers in shader comments. This has cost four build failures, and
+  `tools/lint-shaders.mjs` now parse-checks every file before a round captures.
+
+- A green build does not mean the tree is sound. The bundler only parses what is
+  reachable from the entry point, so a syntax error in an unreferenced file never
+  surfaces — `Nebula.js` carried one for four rounds. Walk the import graph
+  occasionally: 27 of 45 files here turned out never to run at all.
+
+- Check the sense of a derived parameter, not just its range. An ice-cap latitude
+  computed as `1.06 - smoothstep(190, 330, T) * 1.25` stays inside its clamp for
+  every input and is monotonic the wrong way — hot worlds got global ice, frozen
+  ones got none. Anchor such a formula on two known cases (Earth at 288 K, a
+  snowball at 250 K) and check both, because a plausible-looking expression with
+  an inverted slope produces plausible-looking numbers.
+
+- A uniform is one quantity. Using a latitude threshold as an opacity multiplier
+  — `cap * uIceCap * 3.0` — type-checks, runs, and is meaningless. If a name says
+  where, it cannot also mean how much.
+
+- Exposure is not contrast, and a metric is not a criterion. Raising overall
+  intensity lifts the per-tracer floor along with the structure, so a frame with
+  a low peak gets brighter without getting better and eventually loses the empty
+  space the rubric actually asks for. Before optimising a number, check the
+  rubric asks for that number: "peak luminance is low" is expected when the
+  camera is inside a translucent medium.
+
+- When a camera move fixes one rubric line, check it has not broken another.
+  Crossing to the anti-sunward side of a ring system reveals the shadow and
+  simultaneously puts the camera on the unlit face, where the dense annuli
+  correctly go black and the sheet collapses into the concentric wires the same
+  rubric fails the shot for.
+
+- Matching a new population's brightness to an existing one is not the safe
+  choice — it is a claim about which should dominate, and it can be flatly
+  wrong. Planets were drawn to overlap the sky field's range, when from inside a
+  system the planets are the brightest things in it after the star: Venus at
+  −4.9 against Sirius at −1.5 is more than twenty in flux. Ask what the real sky
+  does before deciding two populations should look comparable.
+
+- Clip and cull thresholds must use the real near plane, not a token epsilon.
+  Testing `w <= 1e-4` against a near plane of `0.02` lets vertices well inside it
+  through; their screen position is xy over a thousandth, which swamps any
+  direction computed from it, and the hardware clips them afterwards leaving a
+  sliver. Compare against the actual value and pass it in as a uniform.
+
+- A curve sampled at a fixed count undersamples when the camera comes close.
+  192 samples around an orbit are ample from outside and arbitrarily far apart on
+  screen from within it, so guard on projected segment length — anything spanning
+  several frame heights is not part of a curve any more.
+
+- A per-particle quantity is not a measure of local crowding, and no threshold
+  makes it one. Boosting tracer brightness by the Zel'dovich density to make
+  cluster cores read brings back per-tracer speckle at every gate setting,
+  because that density describes how much one mass element was compressed, not
+  how many neighbours it has on screen. If the goal is "this region should look
+  like a cluster", the count has to happen somewhere neighbours exist — on the
+  CPU — and the cluster drawn as an object.
 - Additive blending integrates the full depth of a volume, which averages
   independent structures together and cancels them. Depth extinction is what
   restores a legible slab.
