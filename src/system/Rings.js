@@ -84,10 +84,22 @@ float opticalDepth(float t){
   // kilometres up to thousands, and hitting several octaves is what stops
   // them reading as a gradient. Centred on 1.0 so it modulates the profile
   // above rather than replacing it.
+  //
+  // Each octave is faded out once its wavelength drops below the pixel
+  // footprint. This is what a mipmap does for a texture, and procedural noise
+  // needs it for the same reason: at a grazing angle t advances by more across
+  // one pixel than the finest octave's whole period, so that octave is sampled
+  // far below its own frequency and turns into stepping rather than detail.
+  // Fading it leaves a smooth sheet instead of aliasing — the correct answer,
+  // since detail finer than a pixel cannot be shown either way.
+  float ft = fwidth(t);
+  float o1 = 1.0 - smoothstep(0.35, 1.1, ft * 42.0);
+  float o2 = 1.0 - smoothstep(0.35, 1.1, ft * 138.0);
+  float o3 = 1.0 - smoothstep(0.35, 1.1, ft * 390.0);
   float b = 1.0
-    + 0.34 * snoise(vec3(t * 42.0, uSeed, 0.0))
-    + 0.20 * snoise(vec3(t * 138.0, uSeed * 1.7, 0.0))
-    + 0.11 * snoise(vec3(t * 390.0, uSeed * 2.3, 0.0));
+    + 0.34 * o1 * snoise(vec3(t * 42.0, uSeed, 0.0))
+    + 0.20 * o2 * snoise(vec3(t * 138.0, uSeed * 1.7, 0.0))
+    + 0.11 * o3 * snoise(vec3(t * 390.0, uSeed * 2.3, 0.0));
 
   float tau = env * max(b, 0.0) * 2.6;
 
@@ -109,9 +121,15 @@ float opticalDepth(float t){
     // width, so a fixed feather is sampled far below its own frequency and the
     // innermost annuli break into dashes. Widening the edges by the local
     // derivative is standard analytic antialiasing and costs one builtin.
-    float aa = fwidth(t) * 1.5;
+    float aa = ft * 1.5;
     float clear = smoothstep(max(w * 0.12, aa * 0.5), max(w, aa), d);
-    float wave = exp(-pow((t - g - w * 1.4) / (w * 0.9), 2.0)) * 0.7;
+    // The density wave is a narrow bright ridge — narrower than the gap it sits
+    // beside — so it is the first thing to go sub-pixel as the sheet tilts away,
+    // and it does it by breaking into a dashed line along the arc rather than
+    // fading. Same treatment as the octaves: once the pixel footprint exceeds
+    // the ridge width there is nothing to resolve, so stop drawing it.
+    float waveAtt = 1.0 - smoothstep(0.5, 1.6, ft / max(w * 0.9, 1e-5));
+    float wave = exp(-pow((t - g - w * 1.4) / (w * 0.9), 2.0)) * 0.7 * waveAtt;
     tau = tau * clear + wave * env;
   }
   return max(tau, 0.0);

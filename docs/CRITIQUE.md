@@ -275,8 +275,25 @@ Defects found in earlier rounds, kept here so they are not rediscovered:
 - Screen-space derivatives are the fix for thin features seen at grazing angles.
   A ring gap several thousandths of a unit wide is sampled far below its own
   frequency where the sheet nears edge-on, and breaks into dashes. Widening the
-  feather by `fwidth` of the parameter costs one builtin and removes the whole
-  class of artefact.
+  feather by `fwidth` of the parameter costs one builtin. Procedural noise
+  octaves want the same treatment — fade each one as its wavelength drops below
+  the pixel footprint, which is what a mipmap does for a texture, since detail
+  finer than a pixel cannot be shown either way.
+
+- "How much of X does this need" sometimes has no answer, only a price. Cosmic
+  web granularity falls as N^-0.544 in tracer count — a smooth asymptote with no
+  threshold where the dots merge — so the useful output of that measurement is a
+  cost curve, not a number. Fit the exponent and quote what the next halving
+  costs; that turns an open defect into a decision someone can actually make.
+
+- Eliminating causes is progress worth recording even when the artefact survives.
+  Four ruled out by direct test — geometry tessellation, a suspect shader term,
+  the noise octaves, and the whole bloom chain — is more use to the next attempt
+  than a fifth plausible guess, and stops the same ground being covered again.
+
+- Not every fringe is a bug. Check the post chain before chasing colour artefacts
+  in a shader: the lens pass here applies chromatic aberration that increases with
+  radius, so coloured edges far from centre are working as designed.
 - Additive blending integrates the full depth of a volume, which averages
   independent structures together and cancels them. Depth extinction is what
   restores a legible slab.

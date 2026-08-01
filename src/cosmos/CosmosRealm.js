@@ -146,9 +146,17 @@ export class CosmosRealm extends Realm {
       // Swept live against the captured frame. Below about 0.4 the filaments
       // bloom along with the nodes and the whole field lifts; above about 0.7 so
       // little clears the threshold that extra strength cannot pay for it.
+      //
+      // Strength can then go much further than it first appears, because with
+      // the threshold set correctly it is spending on the structure alone.
+      // Measured across 2.8 to 10: the 99.5th percentile climbs 68 to 90 while
+      // the median holds at 11.4 to 11.6 — the void floor does not move at all.
+      // What it cannot do is reach white; even at 10 nothing exceeds 147/255,
+      // because the medium's own radiance is too low for the tonemapper to carry
+      // it there. That is a property of the subject, not a setting to find.
       fx.bloomThreshold = 0.55;
       fx.bloomKnee = 0.85;
-      fx.bloomStrength = 2.8;
+      fx.bloomStrength = 7.0;
     }
   }
 
