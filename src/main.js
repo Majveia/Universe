@@ -15,6 +15,7 @@ import { settings } from './core/Settings.js';
 
 import { CosmosRealm } from './cosmos/CosmosRealm.js';
 import { SystemRealm } from './system/SystemRealm.js';
+import { SurfaceRealm } from './planet/SurfaceRealm.js';
 
 const bootEl = document.getElementById('boot');
 const bootSub = document.getElementById('boot-sub');
@@ -66,6 +67,7 @@ async function main() {
   await boot('seeding structure formation');
   director.register(Scale.COSMOS, new CosmosRealm(ctx));
   director.register(Scale.SYSTEM, new SystemRealm(ctx));
+  director.register(Scale.SURFACE, new SurfaceRealm(ctx));
 
   // Descending a scale is the core verb of the whole thing, so it gets a key,
   // a gesture and a programmatic hook rather than being buried in a menu.
@@ -73,9 +75,25 @@ async function main() {
     if (director.currentKey === Scale.COSMOS) {
       await director.goTo(Scale.SYSTEM, { seed: seed ?? (Math.floor(Date.now() / 1000) & 0xffff) }, 'warp', 1.8);
       ctx.scale = Scale.SYSTEM;
+      return;
+    }
+    // System -> ground. Land on whatever the system view is currently framing,
+    // so the world you arrive on is the one you were looking at rather than an
+    // arbitrary one re-rolled from the seed.
+    if (director.currentKey === Scale.SYSTEM) {
+      const sys = director.get(Scale.SYSTEM);
+      const target = sys?.followTarget ?? sys?.planets?.find((p) => !p.record.isGiant);
+      if (!target) return;
+      await director.goTo(Scale.SURFACE, { record: target.record }, 'warp', 2.0);
+      ctx.scale = Scale.SURFACE;
     }
   };
   ctx.ascend = async () => {
+    if (director.currentKey === Scale.SURFACE) {
+      await director.goTo(Scale.SYSTEM, { seed: ctx.lastSystemSeed }, 'warp', 1.6);
+      ctx.scale = Scale.SYSTEM;
+      return;
+    }
     if (director.currentKey !== Scale.COSMOS) {
       await director.goTo(Scale.COSMOS, {}, 'warp', 1.6);
       ctx.scale = Scale.COSMOS;

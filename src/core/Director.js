@@ -134,7 +134,12 @@ export class Director {
     this.camera.far = realm.far;
     this.camera.updateProjectionMatrix();
     realm.active = true;
-    realm.enter(params);
+    // Awaited: a realm that generates on entry — the surface builds a terrain
+    // quadtree around its landing site — must finish before the transition
+    // uncovers it, or the reveal lands on empty space and the player falls
+    // through ground that has not arrived yet. Realms with a synchronous enter
+    // are unaffected, since awaiting a non-promise costs one microtask.
+    await realm.enter(params);
     for (const fn of this.listeners) fn(key, realm, params);
 
     // Give the new realm one frame to populate before we reveal it.
