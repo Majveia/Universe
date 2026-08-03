@@ -16,7 +16,7 @@ import { settings } from './core/Settings.js';
 import { CosmosRealm } from './cosmos/CosmosRealm.js';
 import { SystemRealm } from './system/SystemRealm.js';
 import { SurfaceRealm } from './planet/SurfaceRealm.js';
-import { TouchControls } from './ui/TouchControls.js';
+import { HUD } from './ui/HUD.js';
 
 const bootEl = document.getElementById('boot');
 const bootSub = document.getElementById('boot-sub');
@@ -127,9 +127,15 @@ async function main() {
   // Scale changes go through the same virtual-button path as every other
   // action, so there is one code path for "the player asked to descend" whether
   // it arrived from a thumb, a key or a gamepad.
-  const touch = new TouchControls(document.getElementById('ui'), ctx);
-  ctx.touch = touch;
-  touch.setVisible(settings.isTouch);
+  // The HUD owns the whole interface, TouchControls included: it constructs
+  // it, forwards the action list to it, and drives its visibility from which
+  // input device was last used. Mounting a second one here — as this file did
+  // while the HUD sat unreferenced — would have put two floating sticks on the
+  // same screen fighting over the same thumb.
+  const hud = new HUD(ctx);
+  ctx.touch = hud.touch;
+  director.onChange((key) => hud.setScale(key));
+  hud.setScale(Scale.COSMOS);
 
   const ACTIONS = {
     [Scale.COSMOS]: [
@@ -178,13 +184,16 @@ async function main() {
     // One path for "the player asked to change scale", whatever pressed it.
     if (input.pressed('descend')) ctx.descend();
     if (input.pressed('ascend')) ctx.ascend();
-    touch.setActions(touchActions());
+    hud.setContextActions(touchActions());
     director.update(dt, time);
     director.render();
-    touch.update(dt);
+    // After render, so the HUD reads the frame the player is actually looking
+    // at rather than the previous one.
+    hud.update(dt);
     input.endFrame();
   });
 
+  ctx.hud = hud;
   ctx.ready = true;
 
   // Reveal. `revealed` is a separate signal from `ready` because the capture

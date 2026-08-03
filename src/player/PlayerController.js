@@ -49,6 +49,14 @@ import { CharacterRig } from './CharacterRig.js';
 import { Jetpack } from './Jetpack.js';
 import { FootstepFX } from './FootstepFX.js';
 import { VehicleRegistry, createVehicleCommand } from './Vehicles.js';
+// Concrete vehicles register themselves with the registry as a side effect of
+// being loaded, and Vehicles.js deliberately does not import them — it owns the
+// base class they extend, so importing them back would make the cycle evaluate
+// the subclass before its own base exists. Something on the main path therefore
+// has to pull them in, and this is that place. Without this line VEHICLE_SPECS
+// still advertises a rover while the registry has no constructor for it, so the
+// UI offers a vehicle that cannot be mounted.
+import './Rover.js';
 
 const DEG = Math.PI / 180;
 const Y_UP = new THREE.Vector3(0, 1, 0);
