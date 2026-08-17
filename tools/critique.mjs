@@ -26,7 +26,7 @@
  *   node tools/critique.mjs --only rings,planet-lit
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -48,61 +48,106 @@ mkdirSync(OUT, { recursive: true });
 
 const enc = (s) => encodeURIComponent(s);
 
+/**
+ * Seeds are chosen, not arbitrary. A shot can only test what its subject
+ * actually exercises: "albedo plausible for the stated type" says nothing when
+ * the framed world is an EXOTIC one whose palette is deliberately alien, and
+ * band structure cannot be judged through a ring plane crossing the disc. Every
+ * seed below was picked by sweeping the catalogue offline (see the note on each)
+ * for a subject that puts the rubric criterion in frame, under a sun-like star
+ * so exposure is not fighting a red dwarf.
+ */
+const TERRESTRIAL = "['temperate','jungle','ocean','desert']";
+
 /** Each shot is a name plus a script that drives the app into position. */
 const SHOTS = [
   ['cosmos-wide', 8, `
     const r = ctx.director.current;
-    r.orbit.radius = 26; r._radiusTarget = 26; r.orbit.phi = 1.05; r.orbit.theta = 0.6;
+    r.orbit.radius = 16; r._radiusTarget = 16; r.orbit.phi = 1.05; r.orbit.theta = 0.6;
   `],
   ['cosmos-close', 8, `
     const r = ctx.director.current;
     r.orbit.radius = 8; r._radiusTarget = 8; r.orbit.phi = 1.2;
   `],
+  // G0V, ten planets: enough orbit furniture to read as a system rather than a
+  // star with a couple of specks.
   ['system-wide', 8, `
-    await ctx.director.goTo('system', { seed: 4242 }, 'fade', 0.05);
+    await ctx.director.goTo('system', { seed: 20 }, 'fade', 0.05);
   `],
+  // G1V with a living temperate world at 57% ocean. Balance is the point: an
+  // all-ocean world is a blue ball and says nothing about surface detail.
   ['planet-lit', 9, `
-    await ctx.director.goTo('system', { seed: 911 }, 'fade', 0.05);
+    await ctx.director.goTo('system', { seed: 558 }, 'fade', 0.05);
     await new Promise(r => setTimeout(r, 700));
     const r = ctx.director.current;
-    let best = 0, bs = -1;
+    const TERRA = ${TERRESTRIAL};
+    let best = -1, bs = -1;
     r.planets.forEach((p, i) => {
-      const s = (p.record.hasLife ? 3 : 0) + p.record.atmosphere + p.record.oceanCoverage * 2;
+      const rec = p.record;
+      if (rec.isGiant || !TERRA.includes(rec.type)) return;
+      const bal = 1 - Math.min(1, Math.abs(rec.oceanCoverage - 0.55) * 2);
+      const s = (rec.hasLife ? 3 : 0) + rec.atmosphere + bal * 2;
       if (s > bs) { bs = s; best = i; }
     });
-    r.focus(best);
+    r.focus(best >= 0 ? best : 0);
   `],
+  // G8V with a jungle world carrying 1.44 atmospheres — a thick limb to grade.
   ['planet-crescent', 9, `
-    await ctx.director.goTo('system', { seed: 70117 }, 'fade', 0.05);
+    await ctx.director.goTo('system', { seed: 17 }, 'fade', 0.05);
     await new Promise(r => setTimeout(r, 700));
     const r = ctx.director.current;
-    let best = 0, bs = -1;
-    r.planets.forEach((p, i) => { if (p.record.atmosphere > bs) { bs = p.record.atmosphere; best = i; } });
-    r.focus(best);
-    // Swing round to the night side to test limb glow and star occlusion.
-    const p = r.planets[best];
-    const out = p.truePos.clone().normalize();
-    r.followOffset.copy(out).multiplyScalar(p.record.radius * 3.0);
-    r.followOffset.y += p.record.radius * 0.5;
+    let best = -1, bs = -1;
+    r.planets.forEach((p, i) => {
+      if (p.record.isGiant) return;
+      if (p.record.atmosphere > bs) { bs = p.record.atmosphere; best = i; }
+    });
+    // The realm owns the framing so position and aim stay derived together.
+    r.focus(best >= 0 ? best : 0, 'crescent');
   `],
+  // A ringed gas giant with the star 19 degrees above the ring plane, chosen by
+  // sweeping the catalogue live against both halves of a real tension.
+  //
+  // Reflectance carries a mu0/(mu+mu0) factor, so a ring lit edge-on is
+  // *correctly* almost black — Saturn at equinox all but disappears, which
+  // argues for high elevation. But the umbra falls on the ring plane only out to
+  // 1/sin(elevation) planet radii, and at the 47 degrees this shot used in
+  // round 7 that is 1.37 against an inner ring edge at 1.35: the shadow grazed
+  // the inner rim and nothing else, which is why no umbra ever appeared. Low
+  // elevation gives the shadow and loses the light.
+  //
+  // The way out is not to compromise on elevation but to pick a subject bright
+  // enough to afford a low one. Here the shadow reaches 3.1 radii — past the
+  // outer edge at 2.18, so it crosses the whole sheet — while the giant sits
+  // close enough in that illumination is still at the top of its range.
   ['rings', 9, `
-    await ctx.director.goTo('system', { seed: 1 }, 'fade', 0.05);
+    await ctx.director.goTo('system', { seed: 507 }, 'fade', 0.05);
     await new Promise(r => setTimeout(r, 700));
     const r = ctx.director.current;
-    const i = r.planets.findIndex(p => p.record.hasRings);
-    r.focus(i >= 0 ? i : 0);
+    const i = r.planets.findIndex(p => p.record.hasRings && p.record.isGiant);
+    // The realm owns this framing: it has to sit anti-sunward and high to put
+    // the planet's shadow on the visible half of the ring plane.
+    r.focus(i >= 0 ? i : 0, 'rings');
   `],
+  // G3V with a RINGLESS gas giant, so nothing crosses the bands. Deliberately a
+  // different system from the rings shot: reusing one body made the two frames
+  // the same picture at two zooms and cost a whole rubric line.
   ['gasgiant', 9, `
-    await ctx.director.goTo('system', { seed: 1 }, 'fade', 0.05);
+    await ctx.director.goTo('system', { seed: 22 }, 'fade', 0.05);
     await new Promise(r => setTimeout(r, 700));
     const r = ctx.director.current;
-    const i = r.planets.findIndex(p => p.record.isGiant);
+    let i = r.planets.findIndex(p => p.record.type === 'gasgiant' && !p.record.hasRings);
+    if (i < 0) i = r.planets.findIndex(p => p.record.isGiant);
     if (i >= 0) {
       r.focus(i);
-      const p = r.planets[i];
       // Close in until the body fills the frame; band structure only reads
       // when the planet is large enough to resolve it.
       r.followOffset.multiplyScalar(0.55);
+      // Lift the camera off the equator. The rubric's reference is Juno, whose
+      // whole point is that the poles do not look like the tropics — and from
+      // a dead-equatorial vantage the polar hood is edge-on and cannot be
+      // judged at all.
+      r.followOffset.y += r.planets[i].record.radius * 0.9;
+      r.aimAtFollowTarget();
     }
   `],
 ];
@@ -114,8 +159,33 @@ for (const [name, secs, script] of selected) {
   shotArgs.push('--shot', `${name}:${secs}:${enc(script.trim())}`);
 }
 
+// Build before capturing, unless told not to.
+//
+// Leaving this to the caller means a failed build is invisible: dist/ still
+// exists from last time, the capture runs happily against it, and the round
+// produces frames that do not correspond to the source they are supposed to be
+// judging. A critic that silently reviews stale output is worse than no critic,
+// so the build is part of the run and a failure stops it.
+if (!args.includes('--no-build')) {
+  // Parse-check first. The bundler only sees files reachable from the entry, so
+  // a syntax error in anything unreferenced builds green and lies to the round;
+  // and when it does fail, a stray backtick in a shader template reports as an
+  // unrelated "Expected a semicolon" somewhere else entirely.
+  const lint = spawnSync('node', ['tools/lint-shaders.mjs'], { stdio: 'inherit' });
+  if (lint.status !== 0) {
+    console.error('\n[critique] source does not parse — refusing to capture.');
+    process.exit(2);
+  }
+  console.log('[critique] building...');
+  const build = spawnSync('npm', ['run', 'build'], { stdio: 'inherit' });
+  if (build.status !== 0) {
+    console.error('\n[critique] build FAILED — refusing to capture against a stale dist/.');
+    process.exit(2);
+  }
+}
+
 if (!existsSync(resolve('dist'))) {
-  console.error('[critique] dist/ missing — run `npm run build` first.');
+  console.error('[critique] dist/ missing and --no-build was given.');
   process.exit(2);
 }
 

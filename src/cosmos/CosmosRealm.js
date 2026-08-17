@@ -61,9 +61,15 @@ export class CosmosRealm extends Realm {
     this.near = 0.05;
     this.far = 6000;
     this.ambience = 'cosmos';
-    this.orbit = { theta: 0.6, phi: 1.05, radius: 26, target: new THREE.Vector3() };
+    // Sit just inside the visible volume rather than outside it. The web is
+    // ~14 units of visible radius; from 26 away the whole thing fits on screen
+    // with black all round it and reads as a ball floating in a void — which is
+    // the one thing every survey render avoids. From 16 the structure runs off
+    // all four edges and the frame is filled by filaments instead of by its own
+    // silhouette.
+    this.orbit = { theta: 0.6, phi: 1.05, radius: 16, target: new THREE.Vector3() };
     this._idle = 10;
-    this._radiusTarget = 26;
+    this._radiusTarget = 16;
   }
 
   async build() {

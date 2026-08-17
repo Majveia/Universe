@@ -91,7 +91,7 @@ export const INTERIOR_GLSL = /* glsl */ `
     // dark block of furniture at the bottom.
     vec2 bw = hit.xy;
     float wash = smoothstep(-0.2, 1.0, bw.y);
-    float furniture = smoothstep(-0.55, -0.75, bw.y) * step(0.35, ih11(seed * 13.7));
+    float furniture = (1.0 - smoothstep(-0.75, -0.55, bw.y)) * step(0.35, ih11(seed * 13.7));
     float poster = step(abs(bw.x - (h.x - 0.5)), 0.22) * step(abs(bw.y - 0.1), 0.18)
                  * step(0.62, ih11(seed * 5.3));
 

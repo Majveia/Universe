@@ -28,6 +28,7 @@ function argAll(name) {
   for (let i = 0; i < args.length; i++) if (args[i] === `--${name}`) out.push(args[i + 1]);
   return out;
 }
+
 const has = (name) => args.includes(`--${name}`);
 
 const OUT = resolve(arg('out', 'shots'));
@@ -44,6 +45,19 @@ mkdirSync(OUT, { recursive: true });
 const shots = argAll('shot').length ? argAll('shot') : ['cosmos:0'];
 
 let server = null;
+
+/** Kill the preview server's whole process group, never just its wrapper. */
+function stopServer() {
+  if (!server) return;
+  try {
+    process.kill(-server.pid, 'SIGKILL');
+  } catch {
+    // Group already gone, or never became one — fall back to the direct handle.
+    try { server.kill('SIGKILL'); } catch { /* already dead */ }
+  }
+  server = null;
+}
+
 async function ensureServer() {
   if (URL) return;
   const dist = resolve('dist');
@@ -51,8 +65,13 @@ async function ensureServer() {
     console.error('[shot] dist/ not found — run `npm run build` first.');
     process.exit(2);
   }
+  // Own the whole process group. `npx` forks vite as a child, so killing the
+  // handle we hold reaps the wrapper and orphans the server still holding the
+  // port — after which every later run dies on `Port 4173 is already in use`
+  // before it captures anything. Detaching gives us a group id to signal.
   server = spawn('npx', ['vite', 'preview', '--port', '4173', '--strictPort', '--host', '127.0.0.1'], {
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
   });
   await new Promise((res, rej) => {
     const t = setTimeout(() => rej(new Error('preview server timeout')), 30000);
@@ -155,7 +174,7 @@ async function run() {
 
   const failed = logs.some((l) => l.startsWith('[pageerror]') || l.includes('Shader Error'));
   await browser.close();
-  if (server) server.kill('SIGKILL');
+  stopServer();
   // Chromium's zygote and the vite child can both keep the loop alive; we are
   // done and have written our files, so leave decisively.
   process.exit(failed ? 1 : 0);
@@ -163,6 +182,11 @@ async function run() {
 
 run().catch((e) => {
   console.error('[shot] FAILED:', e.message);
-  if (server) server.kill('SIGKILL');
+  stopServer();
   process.exit(1);
 });
+
+// A crash or a Ctrl-C must not leave the port held either.
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => { stopServer(); process.exit(130); });
+}

@@ -1,6 +1,16 @@
 node_modules/
 dist/
 dist-single/
-shots/
+# Captured frames are large and regenerable, so they stay out. The verdicts are
+# the record of what each round actually found, and a critic loop whose findings
+# live only on one machine's disk cannot be compared across rounds — so those
+# stay in. Git will not descend into an excluded directory, hence the layered
+# re-inclusion rather than a plain `shots/`.
+shots/*
+!shots/critique/
+shots/critique/*
+!shots/critique/*/
+shots/critique/*/*
+!shots/critique/*/VERDICT.md
 *.log
 .DS_Store

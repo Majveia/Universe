@@ -33,12 +33,12 @@ import { clamp } from '../core/Noise.js';
 
 const RING_VERT = /* glsl */ `
 varying vec3 vLocal;
-varying vec3 vWorldDir;
 void main(){
+  // Only the ring-local position is interpolated. The view direction is
+  // reconstructed in the fragment shader from uCamLocal, which is already in
+  // this space — see the note on muV below for why that matters.
   vLocal = position;
-  vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  vWorldDir = -mv.xyz;
-  gl_Position = projectionMatrix * mv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
 
@@ -62,25 +62,50 @@ uniform vec4  uGapWidthA;
 uniform vec4  uGapWidthB;
 
 varying vec3 vLocal;
-varying vec3 vWorldDir;
 
 // Optical depth across the ring plane. Everything downstream is a function of
 // this one number, which is what makes the lit/unlit inversion fall out
 // automatically instead of needing two separate looks.
-float opticalDepth(float t){
-  // Broad envelope: dense in the middle annuli, thinning at both edges the way
-  // an accretion-limited disc does.
-  float env = smoothstep(0.0, 0.10, t) * (1.0 - smoothstep(0.82, 1.0, t));
+// How much of an octave survives at this screen footprint.
+//
+// A ring seen near edge-on compresses the whole radial coordinate into a few
+// pixels, so one pixel can span several periods of the fine banding. Sampling
+// a periodic function once per period returns an arbitrary point on it, and
+// the annulus breaks into dashes — which is what the inner edge was doing where
+// it passes closest to the planet's limb, and why it looked like stair-stepping
+// rather than like noise. Fade each octave out as its period approaches the
+// footprint and the sheet stays continuous instead of sampling garbage.
+//
+// Nyquist puts the limit at half a period per pixel; the rolloff starts at a
+// quarter so an octave is already gone by the time it would alias.
+float bandLimit(float freq, float dt){
+  return 1.0 - smoothstep(0.25, 0.5, freq * dt);
+}
+
+float opticalDepth(float t, float dt){
+  // Radial profile, after Saturn's. The previous envelope was flat across the
+  // whole sheet — it only rolled off at the very edges — so optical depth
+  // barely varied with radius and the rings read as one grey annulus with noise
+  // on it. Real rings are strongly ordered: the C ring is nearly transparent,
+  // the B ring is optically thick and carries almost all the brightness, and
+  // the A ring beyond the Cassini Division sits between the two. That ordering
+  // is most of what identifies a ring system, and it is a radial *profile*, not
+  // a texture.
+  float cRing = 0.16 * smoothstep(0.00, 0.06, t) * (1.0 - smoothstep(0.20, 0.31, t));
+  float bRing = 1.00 * smoothstep(0.24, 0.35, t) * (1.0 - smoothstep(0.60, 0.68, t));
+  float aRing = 0.44 * smoothstep(0.70, 0.77, t) * (1.0 - smoothstep(0.93, 1.00, t));
+  float env = cRing + bRing + aRing;
 
   // Banding across three scales. Real rings have structure from tens of
   // kilometres up to thousands, and hitting several octaves is what stops
-  // them reading as a gradient.
-  float b = 0.55
-    + 0.30 * snoise(vec3(t * 42.0, uSeed, 0.0))
-    + 0.18 * snoise(vec3(t * 138.0, uSeed * 1.7, 0.0))
-    + 0.10 * snoise(vec3(t * 390.0, uSeed * 2.3, 0.0));
+  // them reading as a gradient. Centred on 1.0 so it modulates the profile
+  // above rather than replacing it.
+  float b = 1.0
+    + 0.34 * snoise(vec3(t * 42.0, uSeed, 0.0))        * bandLimit(42.0, dt)
+    + 0.20 * snoise(vec3(t * 138.0, uSeed * 1.7, 0.0)) * bandLimit(138.0, dt)
+    + 0.11 * snoise(vec3(t * 390.0, uSeed * 2.3, 0.0)) * bandLimit(390.0, dt);
 
-  float tau = env * max(b, 0.0) * 3.4;
+  float tau = env * max(b, 0.0) * 2.6;
 
   // Resonance gaps, cut with a hard rim. A density wave piles material up on
   // the outside of each gap, so the edge is bright immediately before it
@@ -93,7 +118,14 @@ float opticalDepth(float t){
     // Clear only the very centre of the resonance and feather hard. A gap
     // that is wide relative to its feather turns the disc into concentric
     // wires; Saturn's real gaps are thin lines in a continuous sheet.
-    float clear = smoothstep(w * 0.12, w, d);
+    //
+    // The feather also cannot be finer than a pixel. At a grazing angle the
+    // 0.12w inner edge fell well inside one footprint, so the gap wall landed
+    // between samples and the rim came out dotted. Widen it to the footprint
+    // when the footprint is coarser, and keep the edges ordered — a reversed
+    // smoothstep is undefined in GLSL and this file has been bitten by it.
+    float lo = min(max(w * 0.12, dt * 1.5), w * 0.9);
+    float clear = smoothstep(lo, w, d);
     float wave = exp(-pow((t - g - w * 1.4) / (w * 0.9), 2.0)) * 0.7;
     tau = tau * clear + wave * env;
   }
@@ -103,12 +135,22 @@ float opticalDepth(float t){
 void main(){
   float r = length(vLocal.xz);
   float t = (r - uInner) / (uOuter - uInner);
+  // Taken before the discard: derivatives are undefined once a quad is only
+  // partly alive, and the ring's edges are exactly where quads get cut.
+  float dt = fwidth(t);
   if (t < 0.0 || t > 1.0) discard;
 
-  float tau = opticalDepth(t);
+  float tau = opticalDepth(t, dt);
   if (tau < 0.002) discard;
 
-  vec3 V = normalize(vWorldDir);
+  // The view direction has to be in the SAME space as the plane normal and as
+  // uSunLocal, and that space is ring-local. Interpolating -(modelViewMatrix *
+  // position) instead gives a view-space vector, whose y is "how far up the
+  // screen this fragment is" rather than "how far off the ring plane the eye
+  // is". Every term below keys off V.y, so that mistake put a hard horizontal
+  // seam across the frame exactly where view-space y changed sign — the middle
+  // scanline — with the lit and unlit branches on opposite sides of it.
+  vec3 V = normalize(uCamLocal - vLocal);
   // The plane normal is local +Y. Grazing views look through far more
   // material, which is why rings brighten and then vanish as they close up.
   float muV = max(abs(V.y), 0.06);
@@ -153,7 +195,7 @@ void main(){
   vec3 P = vLocal;
   float alongSun = dot(P, uSunLocal);
   float perpDist = length(P - uSunLocal * alongSun);
-  float behind = smoothstep(0.0, -0.35, alongSun);
+  float behind = 1.0 - smoothstep(-0.35, 0.0, alongSun);
   float inCylinder = 1.0 - smoothstep(0.90, 1.08, perpDist);
   float shadow = 1.0 - behind * inCylinder * 0.97;
 
@@ -162,7 +204,17 @@ void main(){
   vec3 col = mix(uTint * vec3(1.06, 0.98, 0.90), uTint, smoothstep(0.2, 1.4, tau));
   col *= uSunColor;
 
-  float alpha = clamp(single * uOpacity * shadow, 0.0, 1.0);
+  // How much of the background the sheet hides is a question about extinction
+  // along the view path, and nothing else. Deriving it from the scattered
+  // radiance conflated two different quantities — how much light the ring sends
+  // at the eye, and how
+  // much it stops from behind — so a ring that merely scattered weakly went
+  // see-through: at low sun elevation, or on the backscatter side, the starfield
+  // read straight through annuli several optical depths thick. Opacity is
+  // 1 - exp(-tauV); the shadow term has no business in it either, because a ring
+  // in the planet's umbra is unlit, not absent.
+  float opacity = clamp((1.0 - exp(-tauV)) * uOpacity, 0.0, 1.0);
+
   // Even in the umbra the rings are not black: they catch planetshine.
   vec3 rgb = col * single * uSunIntensity * shadow + uTint * 0.012 * (1.0 - shadow);
 
@@ -170,7 +222,11 @@ void main(){
   // output bands into visible contour lines.
   rgb += (ign(gl_FragCoord.xy) - 0.5) / 255.0;
 
-  gl_FragColor = vec4(max(rgb, 0.0), alpha);
+  // Premultiplied: rgb is the radiance the sheet adds, alpha is what it blocks.
+  // That is exactly the emission-plus-transmittance form volumetric compositing
+  // wants, and it keeps the two independent instead of tying brightness to
+  // coverage.
+  gl_FragColor = vec4(max(rgb, 0.0), opacity);
 }
 `;
 
@@ -239,8 +295,10 @@ export class Rings {
       transparent: true,
       // Normal blending, not additive: rings genuinely occlude what is behind
       // them, and additive would make the planet visible straight through the
-      // densest annuli.
+      // densest annuli. Premultiplied so the shader can emit radiance and
+      // coverage as the independent quantities they are.
       blending: THREE.NormalBlending,
+      premultipliedAlpha: true,
       side: THREE.DoubleSide,
       depthWrite: false,
       depthTest: true,

@@ -140,6 +140,10 @@ class SettingsStore {
     if (q.has('stars')) this.starCount = parseInt(q.get('stars'), 10);
     if (q.has('grain')) this.filmGrain = parseFloat(q.get('grain'));
     if (q.has('fov')) this.fov = parseFloat(q.get('fov'));
+    // Force the touch UI on or off. Touch capability cannot be feature-detected
+    // on a headless capture rig, and a control scheme nobody can test on the
+    // machine that builds it is a control scheme that rots.
+    if (q.has('touch')) this.isTouch = q.get('touch') === '1';
     // `still=1` freezes adaptive downgrades so a slow capture does not
     // silently degrade the very quality it is meant to be judging.
     this.stillMode = q.get('still') === '1';
